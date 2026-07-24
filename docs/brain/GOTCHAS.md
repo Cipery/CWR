@@ -23,6 +23,13 @@ only clip-control is gated — and its fallback (always taken on macOS) reduces 
 Phase 2 (see `../MACOS_PORT.md` "The real GL contract"). Found by gpt-5.6-terra review 2026-07-24;
 an Opus review of the same code missed it — don't trust a single reviewer on GL API tiering.
 
+### Renderer — WorldInstances range must stay bound throughout an instanced run
+**Symptom:** changing the WorldInstances UBO from one fixed store to per-draw ranges can make
+instances after `gl_InstanceID == 0` use uninitialized transforms. **Cause:** `EmitDraw` calls
+`UploadVSWorldMatrix` for every section even during an instanced run; rebinding a scalar ring
+slot there replaces the complete range bound by `UploadWorldInstances`. **Fix:** scalar draws
+allocate and bind a ring slot, but `_instCount > 1` preserves the range uploaded at run start.
+
 ### Threads — Foundation/Threads compiles on macOS but is runtime-broken (build gate lies)
 **Symptom:** arm64 build succeeds, threaded code deadlocks/fails at runtime on macOS.
 **Cause:** `PoSemaphore.cpp`/`MultiSync.hpp` use unnamed POSIX semaphores (`sem_init` = ENOSYS

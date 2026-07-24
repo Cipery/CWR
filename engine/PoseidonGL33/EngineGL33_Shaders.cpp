@@ -7,6 +7,7 @@
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/Graphics/Core/MatrixConversion.hpp>
 #include <Poseidon/Foundation/Common/GamePaths.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 
 #include <SDL3/SDL.h>
 
@@ -782,10 +783,32 @@ void EngineGL33::FlushVSConstants()
 {
     if (!s_vsUBO)
         return;
+    // As with PS constants, most per-draw flushes see the same shader-visible
+    // values. SlotWorld is deliberately excluded: effort 08 moved world
+    // transforms to WorldInstances, leaving this member as std140 layout
+    // padding. Keep mirroring it in s_vsShadow for layout/debug continuity, but
+    // do not let that dead per-object value defeat the upload cache.
+    // Alt+Enter/reset recreates s_vsUBO, so key the cache by UBO id.
+    static float s_vsUploaded[sizeof(s_vsShadow) / sizeof(float)] = {};
+    static bool s_vsEverUploaded = false;
+    static GLuint s_vsUploadedUBO = 0;
+    constexpr size_t worldOffset = VSConst::SlotWorld * 4 * sizeof(float);
+    constexpr size_t worldSize = 4 * 4 * sizeof(float);
+    const bool visibleValuesMatch =
+        memcmp(s_vsUploaded, s_vsShadow, worldOffset) == 0 &&
+        memcmp(reinterpret_cast<const char*>(s_vsUploaded) + worldOffset + worldSize,
+               reinterpret_cast<const char*>(s_vsShadow) + worldOffset + worldSize,
+               sizeof(s_vsShadow) - worldOffset - worldSize) == 0;
+    if (s_vsEverUploaded && s_vsUploadedUBO == s_vsUBO && visibleValuesMatch)
+        return;
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 VS constant upload", 1.0);
     // glBindBufferBase is sticky — done once at UBO creation in
     // InitVertexShaders.  Per-flush we only update buffer contents.
     glBindBuffer(GL_UNIFORM_BUFFER, s_vsUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(s_vsShadow), s_vsShadow);
+    memcpy(s_vsUploaded, s_vsShadow, sizeof(s_vsShadow));
+    s_vsEverUploaded = true;
+    s_vsUploadedUBO = s_vsUBO;
 }
 
 void EngineGL33::FlushPSConstants()
@@ -803,6 +826,7 @@ void EngineGL33::FlushPSConstants()
     static GLuint s_psUploadedUBO = 0;
     if (s_psEverUploaded && s_psUploadedUBO == s_psUBO && memcmp(s_psUploaded, s_psShadow, sizeof(s_psShadow)) == 0)
         return;
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 PS constant upload", 1.0);
     glBindBuffer(GL_UNIFORM_BUFFER, s_psUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(s_psShadow), s_psShadow);
     memcpy(s_psUploaded, s_psShadow, sizeof(s_psShadow));
@@ -821,6 +845,41 @@ static GLuint s_vsScreenObj = 0;
 static GLuint s_vsTransformObj = 0;
 static GLuint s_vsShadowObj = 0;
 
+// WorldInstances declares 256 std140 mat4 values in both vertex shaders, so
+// every bound range must cover the full 16 KB block even for scalar draws.
+// The 2 MB ring holds 128 slots at the common alignment; unusual larger UBO
+// offset alignments reduce the slot count while preserving aligned offsets.
+static constexpr GLsizeiptr WorldBlockSize = 256 * 64;
+static constexpr GLsizeiptr WorldRingTargetSize = 2 * 1024 * 1024;
+static GLsizeiptr s_worldRingStride = WorldBlockSize;
+static GLsizeiptr s_worldRingSize = WorldBlockSize;
+static GLintptr s_worldRingCursor = 0;
+
+static GLsizeiptr AlignWorldRange(GLsizeiptr value, GLsizeiptr alignment)
+{
+    return ((value + alignment - 1) / alignment) * alignment;
+}
+
+static void UploadWorldRange(const float* matrices, GLsizeiptr uploadSize)
+{
+    if (!s_worldUBO || uploadSize <= 0)
+        return;
+
+    PoseidonAssert(uploadSize <= WorldBlockSize);
+    glBindBuffer(GL_UNIFORM_BUFFER, s_worldUBO);
+    if (s_worldRingCursor + WorldBlockSize > s_worldRingSize)
+    {
+        // Replace the data store rather than waiting for draws that reference
+        // ranges in the old store. The next range starts at aligned offset 0.
+        glBufferData(GL_UNIFORM_BUFFER, s_worldRingSize, nullptr, GL_STREAM_DRAW);
+        s_worldRingCursor = 0;
+    }
+
+    glBufferSubData(GL_UNIFORM_BUFFER, s_worldRingCursor, uploadSize, matrices);
+    glBindBufferRange(GL_UNIFORM_BUFFER, 2, s_worldUBO, s_worldRingCursor, WorldBlockSize);
+    s_worldRingCursor += s_worldRingStride;
+}
+
 void EngineGL33::InitVertexShaders()
 {
     s_vsScreenObj = CompileGLShader(GL_VERTEX_SHADER, s_vsScreenGLSL, "vsScreen");
@@ -834,13 +893,25 @@ void EngineGL33::InitVertexShaders()
     glBufferData(GL_UNIFORM_BUFFER, sizeof(s_vsShadow), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, s_vsUBO);
 
-    // WorldInstances array UBO (binding 2) — 256 mat4 = 16 KB, the GL 3.3
-    // minimum guaranteed UBO size. Slot 0 = the classic per-draw world
-    // matrix; instanced batches fill 0..N-1.
+    // WorldInstances ring UBO (binding 2). Each range is the shader's full
+    // 256-mat4 block and starts at GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT.
+    GLint worldOffsetAlignment = 1;
+    GLint maxUniformBlockSize = 0;
+    glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &worldOffsetAlignment);
+    glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &maxUniformBlockSize);
+    PoseidonAssert(maxUniformBlockSize >= WorldBlockSize); // GL 3.3 guarantees 16 KB.
+    if (worldOffsetAlignment < 1)
+        worldOffsetAlignment = 1;
+    s_worldRingStride = AlignWorldRange(WorldBlockSize, worldOffsetAlignment);
+    GLsizeiptr worldRingSlots = WorldRingTargetSize / s_worldRingStride;
+    if (worldRingSlots < 1)
+        worldRingSlots = 1;
+    s_worldRingSize = worldRingSlots * s_worldRingStride;
+    s_worldRingCursor = 0;
+
     glGenBuffers(1, &s_worldUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, s_worldUBO);
-    glBufferData(GL_UNIFORM_BUFFER, 256 * 64, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 2, s_worldUBO);
+    glBufferData(GL_UNIFORM_BUFFER, s_worldRingSize, nullptr, GL_STREAM_DRAW);
 
     _vertexShaderSel = VSNone;
 }
@@ -867,6 +938,12 @@ void EngineGL33::DeinitVertexShaders()
         glDeleteBuffers(1, &s_vsUBO);
         s_vsUBO = 0;
     }
+    if (s_worldUBO)
+    {
+        glDeleteBuffers(1, &s_worldUBO);
+        s_worldUBO = 0;
+    }
+    s_worldRingCursor = 0;
 }
 
 void EngineGL33::SelectVertexShader(VertexShaderID vs)
@@ -1088,21 +1165,26 @@ void EngineGL33::UploadWorldInstances(const float* matrices, int count)
         return;
     if (count > 256)
         count = 256;
-    glBindBuffer(GL_UNIFORM_BUFFER, s_worldUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, count * 64, matrices);
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 instance buffer upload", 1.0);
+    UploadWorldRange(matrices, count * 64);
 }
 
 void EngineGL33::UploadVSWorldMatrix(const float worldMatrix[16])
 {
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 world matrix upload", 1.0);
     memcpy(s_vsShadow + VSConst::SlotWorld * 4, worldMatrix, 64);
     // Shaders read the world matrix from WorldInstances slot 0 (effort 08);
     // the VSConstants world member stays as std140 padding.
-    if (s_worldUBO)
+    if (s_worldUBO && _instCount <= 1)
     {
-        glBindBuffer(GL_UNIFORM_BUFFER, s_worldUBO);
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, worldMatrix);
+        // UploadWorldInstances bound the complete range before an instanced
+        // run. Keep that range for every section draw; rebinding a scalar slot
+        // here would make gl_InstanceID > 0 read uninitialized matrices.
+        UploadWorldRange(worldMatrix, 64);
         return;
     }
+    if (s_worldUBO)
+        return;
     // Per-draw path: only the world matrix changed — upload its 64 bytes
     // instead of the whole 1120-byte block (5k draws/frame at high view
     // distance made the full flush the dominant submission cost). Other
