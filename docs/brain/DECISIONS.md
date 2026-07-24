@@ -37,3 +37,10 @@ hardest workstream.
 `packages/` is the repo's designated git-ignored staging area; binaries are useless
 without data, and local data enables real smoke tests from Phase 0 on. Data is APL-SA —
 never committed (see [[NORTH_STAR]]).
+
+### 2026-07-24 · Metal backend M6 gate passed — Auto flipped to Metal
+Measured on the CleanSweep II mission (M4 Pro, 1280x720): Metal 5.51 ms avg /
+181 fps vs GL33 50.21 ms / 19.9 fps — 9.1×. — *Why the flip:* the plan's gate
+(A/B parity suite + perf target) is met; GL33 remains registered at priority 100
+for `--render gl33` A/B work. *Note:* dev-panel imgui overlay is still GL-only
+(documented plan decision — CLI/tri verbs cover Metal verification).

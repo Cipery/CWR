@@ -20,9 +20,10 @@ locked repository — no PRs accepted there; all work lives on the `Cipery/CWR` 
 - `thirdparty/` is excluded from the project GPL (vendored code, own licenses).
 
 ## Current status (keep fresh)
-**Playable on Apple Silicon (2026-07-24):** Phases 0-2 done in one day — client runs,
-menu + missions play, audio works, HiDPI fixed, UBO sync stalls fixed. Remaining perf
-ceiling = Apple GL translation layer (~40 µs/draw call) → **Metal backend pulled
-forward** (see [[DECISIONS]]); work happens on `metal-backend` branch, `macos-port`
-stays the playable baseline. Phase 3 (packaging/CI/paths) intentionally open.
-Caveat: Windows/Linux builds untested since the port started (no CI yet).
+**NATIVE METAL RENDERER COMPLETE (2026-07-24, M0-M6 in one day):** on branch
+`metal-backend` the game runs on a native Metal 3 backend — menu, missions, alpha,
+MSAA, shadows all A/B-equivalent to GL33, **9.1× faster** (181 fps vs 19.9 fps
+mission avg on M4 Pro). `Auto` selects Metal; GL33 stays as reference via
+`--render gl33`. Each milestone RFL-reviewed (opus xhigh + sol high) and committed
+separately. Remaining: merge `metal-backend` → `macos-port` (user decision),
+Phase 3 packaging/CI/paths, Windows/Linux builds still untested since port start.
