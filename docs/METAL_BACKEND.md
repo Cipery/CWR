@@ -1142,6 +1142,13 @@ backend-agnostic; only the terminal upload call changes.
 
 ### 7.3 Upload path, ordering, mip streaming & remount
 
+- **M2 entry gate — texture residency policy:** before static-world rendering
+  begins, port the frame LRU, VRAM-budget accounting/eviction, resident
+  mip-range decisions, and per-frame allocation/copy throttles from
+  `PoseidonGL33/TextureBankGL33_Cache.cpp` (plus its
+  `TextureBankGL33_Core.cpp` reserve/forced-reserve machinery). M1's Metal bank
+  is demand-load-only; entering M2 without this port can produce unbounded
+  residency and upload bursts on world-scale texture sets.
 - Textures are **private storage** `MTLTexture`s. Uploads go: transient **shared
   staging buffer** → `MTLBlitCommandEncoder::copyFromBuffer(toTexture:)` per mip level,
   on a dedicated upload command buffer created on demand by the texture bank. All

@@ -2,8 +2,8 @@
 
 #include <PoseidonMetal/EngineMetal.hpp>
 
-#include <Poseidon/Graphics/Dummy/TextBankDummy.hpp>
 #include <Poseidon/Foundation/Logging/Logging.hpp>
+#include <PoseidonMetal/TextureMetal.hpp>
 
 #include <SDL3/SDL_filesystem.h>
 
@@ -39,22 +39,35 @@ const char* ErrorText(NS::Error* error)
     NS::String* description = error->localizedDescription();
     return description ? description->utf8String() : "unknown Metal error";
 }
+
+void StoreDiagnostic(const std::shared_ptr<MetalDiagnostics>& diagnostics, const std::string& message)
+{
+    {
+        std::lock_guard<std::mutex> lock(diagnostics->mutex);
+        ++diagnostics->errorCount;
+        diagnostics->lastMessage = message;
+    }
+    LOG_ERROR(Graphics, "Metal: {}", message);
+}
 } // namespace
 
 EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     : _w(width), _h(height), _pixelSize(bpp), _windowedRestoreW(width), _windowedRestoreH(height), _windowed(windowed),
       _clearColor(std::make_unique<MTL::ClearColor>(0.04, 0.10, 0.22, 1.0))
 {
-    LOG_INFO(Graphics, "Metal: Initializing M0 backend — bootstrap {}x{} {}bpp {}", _w, _h, _pixelSize,
+    LOG_INFO(Graphics, "Metal: Initializing M1 2D/HUD backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
              _windowed ? "windowed" : "fullscreen");
 
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
-    _textBank = new TextBankDummy();
-
+    if (!pool)
+    {
+        RecordDiagnostic("failed to allocate the initialization autorelease pool");
+        return;
+    }
     _metal.device = MTL::CreateSystemDefaultDevice();
     if (!_metal.device)
     {
-        LOG_ERROR(Graphics, "Metal: MTL::CreateSystemDefaultDevice failed");
+        RecordDiagnostic("MTL::CreateSystemDefaultDevice failed");
         pool->drain();
         return;
     }
@@ -62,7 +75,7 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     _metal.commandQueue = _metal.device->newCommandQueue();
     if (!_metal.commandQueue)
     {
-        LOG_ERROR(Graphics, "Metal: newCommandQueue failed");
+        RecordDiagnostic("newCommandQueue failed");
         pool->drain();
         return;
     }
@@ -74,11 +87,17 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     }
     if (!_frameRing.Initialize(_metal.device))
     {
-        LOG_ERROR(Graphics, "Metal: failed to allocate the three frame-ring arenas");
+        RecordDiagnostic("failed to allocate the three frame-ring arenas");
         pool->drain();
         return;
     }
     if (!LoadShaderLibrary())
+    {
+        pool->drain();
+        return;
+    }
+    _textBank = new TextBankMetal(this);
+    if (!InitializeM1Resources())
     {
         pool->drain();
         return;
@@ -111,7 +130,8 @@ EngineMetal::~EngineMetal()
             fence->commit();
             fence->waitUntilCompleted();
         }
-        pool->drain();
+        if (pool)
+            pool->drain();
     }
 
     if (_initialized)
@@ -120,6 +140,7 @@ EngineMetal::~EngineMetal()
     ClearFontCache();
     delete _textBank;
     _textBank = nullptr;
+    DestroyM1Resources();
 
     // Release the ring's device-created buffers deterministically while the
     // owning MTLDevice is still alive. FrameRing's destructor remains an
@@ -160,19 +181,39 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
         return;
 
     _framePool = NS::AutoreleasePool::alloc()->init();
+    if (!_framePool)
+    {
+        RecordDiagnostic("failed to allocate the frame autorelease pool");
+        return;
+    }
     _frameCommandBuffer = _frameRing.BeginSpan(_metal.commandQueue);
     if (!_frameCommandBuffer)
     {
-        LOG_ERROR(Graphics, "Metal: failed to begin a frame-ring command-buffer span");
+        RecordDiagnostic("failed to begin a frame-ring command-buffer span");
         _framePool->drain();
         _framePool = nullptr;
         return;
     }
 
+    _frameOpen = true;
+    for (std::uint32_t handle : _frameMeshHandles)
+        _meshRegistry.Release(handle);
+    _frameMeshHandles.clear();
+    _frameMeshes.clear();
+    _drawItems.clear();
+    _queuedVertices.clear();
+    _triQueues.clear();
+    _mesh = nullptr;
+    _meshBase = 0;
+    _currentPrimitiveBase = 0;
+    _activeQueue = -1;
+    _frameNeedsClear = clear;
+    _clearDepth = true;
+    if (_textBank)
+        _textBank->StartFrame();
     base::InitDraw(clear, color);
     if (clear)
         Clear(true, true, color);
-    _frameOpen = true;
 }
 
 void EngineMetal::FinishDraw()
@@ -180,11 +221,18 @@ void EngineMetal::FinishDraw()
     if (!_frameOpen)
         return;
 
+    base::FinishDraw();
+    base::DrawFinishTexts();
+    FlushQueues();
+    if (_frameNeedsClear)
+        EnsureFrameEncoder();
+    EndFrameEncoder();
+    if (_textBank)
+        _textBank->FinishFrame();
     AttachDiagnostics(_frameCommandBuffer);
     _frameRing.EndSpan(_frameCommandBuffer);
     _frameCommandBuffer = nullptr;
     _frameOpen = false;
-    base::FinishDraw();
 
     _framePool->drain();
     _framePool = nullptr;
@@ -196,28 +244,59 @@ void EngineMetal::NextFrame()
         return;
 
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    if (!pool)
+    {
+        RecordDiagnostic("failed to allocate the present autorelease pool");
+        return;
+    }
 
-    CA::MetalDrawable* drawable = (_w > 0 && _h > 0) ? _metal.layer->nextDrawable() : nullptr;
+    CaptureScreenshotIfPending();
+
+    CA::MetalDrawable* drawable = (_w > 0 && _h > 0 && _frameColor) ? _metal.layer->nextDrawable() : nullptr;
     if (drawable)
     {
         MTL::CommandBuffer* commandBuffer = _metal.commandQueue->commandBuffer();
         if (commandBuffer)
         {
             MTL::RenderPassDescriptor* pass = MTL::RenderPassDescriptor::renderPassDescriptor();
-            MTL::RenderPassColorAttachmentDescriptor* colorAttachment = pass->colorAttachments()->object(0);
-            colorAttachment->setTexture(drawable->texture());
-            colorAttachment->setLoadAction(MTL::LoadActionClear);
-            colorAttachment->setStoreAction(MTL::StoreActionStore);
-            colorAttachment->setClearColor(*_clearColor);
-
-            MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(pass);
-            if (encoder)
+            if (!pass)
             {
-                encoder->endEncoding();
-                commandBuffer->presentDrawable(drawable);
-                AttachDiagnostics(commandBuffer);
-                commandBuffer->commit();
+                RecordDiagnostic("failed to create the present render-pass descriptor");
             }
+            else
+            {
+                MTL::RenderPassColorAttachmentDescriptor* colorAttachment = pass->colorAttachments()->object(0);
+                colorAttachment->setTexture(drawable->texture());
+                colorAttachment->setLoadAction(MTL::LoadActionDontCare);
+                colorAttachment->setStoreAction(MTL::StoreActionStore);
+
+                MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(pass);
+                if (encoder)
+                {
+                    const Metal::PipelineKey key = Metal::PipelineKey::Make(
+                        Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque,
+                        0xf, Metal::VertexLayout::None, Metal::AttachmentConfig::PresentPass, 0, false);
+                    if (MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true))
+                    {
+                        encoder->setRenderPipelineState(pipeline);
+                        encoder->setFragmentTexture(_frameColor, 0);
+                        encoder->setFragmentSamplerState(_samplers[0], 0);
+                        encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+                    }
+                    encoder->endEncoding();
+                    commandBuffer->presentDrawable(drawable);
+                    AttachDiagnostics(commandBuffer);
+                    commandBuffer->commit();
+                }
+                else
+                {
+                    RecordDiagnostic("failed to create the present render encoder");
+                }
+            }
+        }
+        else
+        {
+            RecordDiagnostic("failed to create the present command buffer");
         }
     }
 
@@ -228,15 +307,24 @@ void EngineMetal::NextFrame()
     pool->drain();
 }
 
-void EngineMetal::Clear(bool, bool clear, PackedColor color)
+void EngineMetal::Clear(bool clearZ, bool clear, PackedColor color)
 {
-    if (!clear)
-        return;
-
-    const double r = ((color >> 16) & 0xFF) / 255.0;
-    const double g = ((color >> 8) & 0xFF) / 255.0;
-    const double b = (color & 0xFF) / 255.0;
-    *_clearColor = MTL::ClearColor::Make(r, g, b, 1.0);
+    if (_frameOpen && (_frameEncoder || !_triQueues.empty()))
+    {
+        FlushQueues();
+        EndFrameEncoder();
+    }
+    if (clear)
+    {
+        const double r = ((color >> 16) & 0xFF) / 255.0;
+        const double g = ((color >> 8) & 0xFF) / 255.0;
+        const double b = (color & 0xFF) / 255.0;
+        *_clearColor = MTL::ClearColor::Make(r, g, b, 1.0);
+        _frameNeedsClear = true;
+    }
+    _clearDepth = _clearDepth || clearZ;
+    if (_frameOpen && (clear || clearZ))
+        EnsureFrameEncoder();
 }
 
 bool EngineMetal::LoadShaderLibrary()
@@ -254,7 +342,7 @@ bool EngineMetal::LoadShaderLibrary()
                 LOG_INFO(Graphics, "Metal: loaded {}", metallibPath);
                 return true;
             }
-            LOG_ERROR(Graphics, "Metal: failed to load {}: {}", metallibPath, ErrorText(error));
+            RecordDiagnostic("failed to load " + metallibPath + ": " + ErrorText(error));
             return false;
         }
     }
@@ -263,8 +351,8 @@ bool EngineMetal::LoadShaderLibrary()
     std::string source;
     if (!ReadTextFile(sourcePath, source))
     {
-        LOG_ERROR(Graphics, "Metal: neither PoseidonShaders.metallib nor staged PoseidonShaders.metal exists next to "
-                            "the executable");
+        RecordDiagnostic("neither PoseidonShaders.metallib nor staged PoseidonShaders.metal exists next to the "
+                         "executable");
         return false;
     }
 
@@ -273,7 +361,7 @@ bool EngineMetal::LoadShaderLibrary()
     MTL::CompileOptions* compileOptions = MTL::CompileOptions::alloc()->init();
     if (!compileOptions)
     {
-        LOG_ERROR(Graphics, "Metal: failed to allocate runtime shader compile options");
+        RecordDiagnostic("failed to allocate runtime shader compile options");
         return false;
     }
     compileOptions->setLanguageVersion(MTL::LanguageVersion3_2);
@@ -281,12 +369,17 @@ bool EngineMetal::LoadShaderLibrary()
     compileOptions->release();
     if (!_metal.shaderLibrary)
     {
-        LOG_ERROR(Graphics, "Metal: runtime compilation of {} failed: {}", sourcePath, ErrorText(error));
+        RecordDiagnostic("runtime compilation of " + sourcePath + " failed: " + ErrorText(error));
         return false;
     }
 
     LOG_WARN(Graphics, "Metal: runtime-compiled pre-expanded shader source from {}", sourcePath);
     return true;
+}
+
+void EngineMetal::RecordDiagnostic(const std::string& message)
+{
+    StoreDiagnostic(_diagnostics, message);
 }
 
 void EngineMetal::AttachDiagnostics(MTL::CommandBuffer* commandBuffer)
@@ -301,15 +394,10 @@ void EngineMetal::AttachDiagnostics(MTL::CommandBuffer* commandBuffer)
             NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
             if (completed && completed->status() == MTL::CommandBufferStatusError)
             {
-                const std::string message = ErrorText(completed->error());
-                {
-                    std::lock_guard<std::mutex> lock(diagnostics->mutex);
-                    ++diagnostics->errorCount;
-                    diagnostics->lastMessage = message;
-                }
-                LOG_ERROR(Graphics, "Metal command buffer failed: {}", message);
+                StoreDiagnostic(diagnostics, std::string("command buffer failed: ") + ErrorText(completed->error()));
             }
-            pool->release();
+            if (pool)
+                pool->drain();
         });
 }
 
@@ -343,6 +431,8 @@ AbstractTextBank* EngineMetal::TextBank()
 
 void EngineMetal::ResetForRemount()
 {
+    FlushQueues();
+    _drawItems.clear();
     if (_textBank)
         _textBank->ReleaseAllTextures();
 }

@@ -4,10 +4,14 @@ file(GLOB_RECURSE POSEIDON_METAL_SOURCES CONFIGURE_DEPENDS
 
 set(POSEIDON_METAL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/EngineMetal.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CopyLayout.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/FrameRing.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/HandleRegistry.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MetalContext.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MetalFwd.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PipelineKey.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Private/MetalCppFirst.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TextureMetal.hpp
 )
 
 # These switches must be defined before MetalCppFirst.hpp is parsed, so keep

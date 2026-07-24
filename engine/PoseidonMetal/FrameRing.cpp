@@ -28,14 +28,18 @@ bool FrameRing::Initialize(MTL::Device* device)
         return false;
 
     ReleaseArenas();
+    _device = device;
     for (Slot& slot : _slots)
     {
-        slot.arena = device->newBuffer(kInitialArenaSize, MTL::ResourceStorageModeShared);
-        if (!slot.arena)
+        Block block;
+        block.buffer = device->newBuffer(kInitialArenaSize, MTL::ResourceStorageModeShared);
+        block.capacity = kInitialArenaSize;
+        if (!block.buffer)
         {
             ReleaseArenas();
             return false;
         }
+        slot.blocks.push_back(block);
     }
     return true;
 }
@@ -44,13 +48,14 @@ void FrameRing::ReleaseArenas()
 {
     for (Slot& slot : _slots)
     {
-        if (slot.arena)
+        for (Block& block : slot.blocks)
         {
-            slot.arena->release();
-            slot.arena = nullptr;
+            if (block.buffer)
+                block.buffer->release();
         }
-        slot.cursor = 0;
+        slot.blocks.clear();
     }
+    _device = nullptr;
 }
 
 MTL::CommandBuffer* FrameRing::BeginSpan(MTL::CommandQueue* queue)
@@ -60,10 +65,10 @@ MTL::CommandBuffer* FrameRing::BeginSpan(MTL::CommandQueue* queue)
 
     dispatch_semaphore_wait(_available, DISPATCH_TIME_FOREVER);
     _slotIndex = (_slotIndex + 1) % kMaxFramesInFlight;
-    _slots[_slotIndex].cursor = 0;
+    for (Block& block : _slots[_slotIndex].blocks)
+        block.cursor = 0;
 
-    // M0 has no streamed bindings yet. The generation is the explicit
-    // invalidation contract M1's binding cache and dirty-all state consume.
+    // Every slot rotation invalidates streamed {buffer,offset} bindings.
     ++_streamingGeneration;
     _active = true;
 
@@ -71,6 +76,49 @@ MTL::CommandBuffer* FrameRing::BeginSpan(MTL::CommandQueue* queue)
     if (!commandBuffer)
         AbortSpan();
     return commandBuffer;
+}
+
+MTL::CommandBuffer* FrameRing::CreateContinuation(MTL::CommandQueue* queue)
+{
+    // A continuation shares the active slot and its existing allocation
+    // cursor. It deliberately does not rotate/reset the slot or move the
+    // semaphore signal away from EndSpan's final command buffer.
+    if (!queue || !_active)
+        return nullptr;
+    return queue->commandBuffer();
+}
+
+FrameRing::Allocation FrameRing::Allocate(std::size_t size, std::size_t alignment)
+{
+    if (!_active || !_device || size == 0)
+        return {};
+    if (alignment == 0)
+        alignment = 1;
+
+    Slot& slot = _slots[_slotIndex];
+    for (Block& block : slot.blocks)
+    {
+        const std::size_t offset = (block.cursor + alignment - 1) & ~(alignment - 1);
+        if (offset + size > block.capacity)
+            continue;
+        block.cursor = offset + size;
+        return {block.buffer, offset, static_cast<char*>(block.buffer->contents()) + offset};
+    }
+
+    std::size_t capacity = kInitialArenaSize;
+    if (!slot.blocks.empty())
+        capacity = slot.blocks.back().capacity * 2;
+    while (capacity < size)
+        capacity *= 2;
+
+    Block block;
+    block.buffer = _device->newBuffer(capacity, MTL::ResourceStorageModeShared);
+    if (!block.buffer)
+        return {};
+    block.capacity = capacity;
+    block.cursor = size;
+    slot.blocks.push_back(block);
+    return {block.buffer, 0, block.buffer->contents()};
 }
 
 void FrameRing::EndSpan(MTL::CommandBuffer* commandBuffer)

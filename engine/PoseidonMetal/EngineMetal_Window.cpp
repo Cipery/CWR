@@ -175,14 +175,14 @@ bool EngineMetal::InitializeWindow(int width, int height, bool requestedWindowed
     _metal.view = SDL_Metal_CreateView(_sdlWindow);
     if (!_metal.view)
     {
-        LOG_ERROR(Graphics, "Metal: SDL_Metal_CreateView failed: {}", SDL_GetError());
+        RecordDiagnostic(std::string("SDL_Metal_CreateView failed: ") + SDL_GetError());
         return false;
     }
 
     _metal.layer = static_cast<CA::MetalLayer*>(SDL_Metal_GetLayer(_metal.view));
     if (!_metal.layer)
     {
-        LOG_ERROR(Graphics, "Metal: SDL_Metal_GetLayer returned null");
+        RecordDiagnostic("SDL_Metal_GetLayer returned null");
         return false;
     }
 
@@ -200,10 +200,8 @@ bool EngineMetal::InitializeWindow(int width, int height, bool requestedWindowed
         _refreshRate = placement.refreshHz;
 
     _eventWindow.Attach(
-        _sdlWindow, _w, _h,
-        [](void* context, int pixelWidth, int pixelHeight)
-        { static_cast<EngineMetal*>(context)->OnWindowResized(pixelWidth, pixelHeight); },
-        this);
+        _sdlWindow, _w, _h, [](void* context, int pixelWidth, int pixelHeight)
+        { static_cast<EngineMetal*>(context)->OnWindowResized(pixelWidth, pixelHeight); }, this);
     return true;
 }
 
@@ -247,6 +245,7 @@ void EngineMetal::ApplyPendingResize()
     _pendingPixelW = 0;
     _pendingPixelH = 0;
     _metal.layer->setDrawableSize(CGSizeMake(_w, _h));
+    RebuildFrameTargets();
     FireResizePostHook(_w, _h);
     LOG_DEBUG(Graphics, "Metal: drawable resized to {}x{}", _w, _h);
 }

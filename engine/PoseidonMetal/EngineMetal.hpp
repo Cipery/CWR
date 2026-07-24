@@ -1,18 +1,27 @@
 #pragma once
 
 #include <Poseidon/Graphics/Core/Engine.hpp>
+#include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Graphics/Shared/SDLEventWindow.hpp>
 #include <PoseidonMetal/FrameRing.hpp>
+#include <PoseidonMetal/HandleRegistry.hpp>
 #include <PoseidonMetal/MetalFwd.hpp>
 #include <PoseidonMetal/MetalContext.hpp>
+#include <PoseidonMetal/PipelineKey.hpp>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace Poseidon
 {
-class TextBankDummy;
+class TextBankMetal;
+class TextureMetal;
 
 struct MetalDiagnostics
 {
@@ -80,20 +89,30 @@ class EngineMetal final : public Engine
     bool IsResizable() const override;
     int AFrameTime() const override { return 0; }
 
-    void PrepareTriangle(const MipInfo&, int) override {}
-    void DrawPolygon(const VertexIndex*, int) override {}
-    void DrawSection(const FaceArray&, Offset, Offset) override {}
+    void PrepareTriangle(const MipInfo&, int) override;
+    void DrawPolygon(const VertexIndex*, int) override;
+    void DrawSection(const FaceArray&, Offset, Offset) override;
     void DrawDecal(Vector3Par, float, float, float, PackedColor, const MipInfo&, int) override {}
-    void Draw2D(const Draw2DPars&, const Rect2DAbs&, const Rect2DAbs&) override {}
-    void DrawPoly(const MipInfo&, const Vertex2DAbs*, int, const Rect2DAbs&, int) override {}
-    void DrawPoly(const MipInfo&, const Vertex2DPixel*, int, const Rect2DPixel&, int) override {}
-    void DrawLine(const Line2DAbs&, PackedColor, PackedColor, const Rect2DAbs&) override {}
-    void DrawLine(int, int) override {}
-    void PrepareMesh(const render::LegacySpec&) override {}
-    void BeginMesh(TLVertexTable&, const render::LegacySpec&) override {}
-    void EndMesh(TLVertexTable&) override {}
+    void Draw2D(const Draw2DPars&, const Rect2DAbs&, const Rect2DAbs&) override;
+    void DrawPoly(const MipInfo&, const Vertex2DAbs*, int, const Rect2DAbs&, int) override;
+    void DrawPoly(const MipInfo&, const Vertex2DPixel*, int, const Rect2DPixel&, int) override;
+    void DrawLine(const Line2DAbs&, PackedColor, PackedColor, const Rect2DAbs&) override;
+    void DrawLine(int, int) override;
+    void PrepareMesh(const render::LegacySpec&) override;
+    void BeginMesh(TLVertexTable&, const render::LegacySpec&) override;
+    void EndMesh(TLVertexTable&) override;
+    void EnableReorderQueues(bool enable) override;
+    void FlushQueues() override;
+    void EmitDraw(const render::frame::Draw& d) override;
     AbstractTextBank* TextBank() override;
-    void TextureDestroyed(Texture*) override {}
+    void TextureDestroyed(Texture*) override;
+    void Screenshot(RString filename) override;
+    void FlushPendingScreenshot() override;
+    int SampleBackBufferNonBlack() override;
+    bool SamplePixel(int x, int y, uint8_t* outRGB) override;
+    void DrawTestPattern(const char* name) override;
+    size_t GetDrawItemCount() const override { return _drawItems.size(); }
+    const std::vector<DrawItem>* GetRecordedDraws() const override { return &_drawItems; }
 
     float ZShadowEpsilon() const override { return 0.0f; }
     float ZRoadEpsilon() const override { return 0.0f; }
@@ -109,22 +128,92 @@ class EngineMetal final : public Engine
     bool ZBiasExclusion() const override { return false; }
     void ResetForRemount() override;
 
+    bool IsTextureHandleLive(std::uint32_t handle) const;
+
   private:
+    friend class TextureMetal;
+    friend class TextBankMetal;
+
+    struct TriQueue
+    {
+        TextureMetal* texture = nullptr;
+        int level = 0;
+        int special = 0;
+        PassId passId = PassId::Opaque;
+        std::vector<std::uint16_t> indices;
+    };
+    struct MeshResource
+    {
+        MTL::Buffer* vertices = nullptr; // Frame-ring owned.
+        MTL::Buffer* indices = nullptr;  // Frame-ring owned.
+        std::size_t vertexOffset = 0;
+        std::size_t indexOffset = 0;
+    };
+
     bool InitializeWindow(int width, int height, bool requestedWindowed);
     void DestroyWindow();
     bool LoadShaderLibrary();
+    bool InitializeM1Resources();
+    void DestroyM1Resources();
+    bool RebuildFrameTargets();
+    bool InitializePipelines();
+    bool InitializeDepthStates();
+    bool InitializeSamplers();
+    bool InitializeFallbackTextures();
+    MTL::RenderPipelineState* ResolvePipeline(Metal::PipelineKey key, bool logMiss);
+    MTL::RenderPipelineState* BuildPipeline(Metal::PipelineKey key);
+    MTL::RenderCommandEncoder* EnsureFrameEncoder();
+    void EndFrameEncoder();
+    bool ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment);
+    void QueueVertices(const TLVertex* vertices, int count);
+    void QueueFan(const VertexIndex* indices, int count);
+    void Queue2DPoly(int count);
+    TriQueue& QueueFor(TextureMetal* texture, int level, int spec);
+    void FlushQueueBatch();
+    bool UploadTexture(TextureMetal& texture, int levelMin);
+    bool UploadDynamicTexture(TextureMetal& texture, int width, int height, const void* rgba, std::uint32_t size,
+                              bool mipmap);
+    void ReleaseTexture(TextureMetal& texture);
+    bool ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& height);
+    bool ReadCapturePixel(int x, int y, std::uint8_t rgba[4]);
+    bool SubmitSynchronousReadback(MTL::CommandBuffer* commandBuffer);
+    void CaptureScreenshotIfPending();
     void ApplyPendingResize();
+    void RecordDiagnostic(const std::string& message);
     void AttachDiagnostics(MTL::CommandBuffer* commandBuffer);
 
     MetalContext _metal;
     FrameRing _frameRing;
     std::shared_ptr<MetalDiagnostics> _diagnostics = std::make_shared<MetalDiagnostics>();
 
-    TextBankDummy* _textBank = nullptr;
+    TextBankMetal* _textBank = nullptr;
     SDL_Window* _sdlWindow = nullptr;
     SDLEventWindow _eventWindow;
     MTL::CommandBuffer* _frameCommandBuffer = nullptr;
+    MTL::RenderCommandEncoder* _frameEncoder = nullptr;
     NS::AutoreleasePool* _framePool = nullptr;
+
+    MTL::Texture* _frameColor = nullptr;
+    MTL::Texture* _frameDepthStencil = nullptr;
+    std::array<MTL::Texture*, 2> _fallbackWhite = {};
+    HandleRegistry<MTL::Texture> _textureRegistry;
+    HandleRegistry<MeshResource> _meshRegistry;
+    std::unordered_map<std::uint32_t, MTL::RenderPipelineState*> _pipelineCache;
+    std::array<MTL::DepthStencilState*, static_cast<std::size_t>(Metal::DepthMode::Count)> _depthStates = {};
+    std::array<MTL::SamplerState*, 8> _samplers = {};
+    std::vector<TLVertex> _queuedVertices;
+    std::vector<TriQueue> _triQueues;
+    std::vector<DrawItem> _drawItems;
+    std::vector<std::unique_ptr<MeshResource>> _frameMeshes;
+    std::vector<std::uint32_t> _frameMeshHandles;
+    TLVertexTable* _mesh = nullptr;
+    int _meshBase = 0;
+    int _currentPrimitiveBase = 0;
+    int _activeQueue = -1;
+    bool _enableReorder = true;
+    bool _frameNeedsClear = true;
+    bool _clearDepth = true;
+    RString _pendingScreenshotPath;
 
     int _w = 0;
     int _h = 0;
@@ -139,6 +228,7 @@ class EngineMetal final : public Engine
     float _gamma = 1.0f;
     bool _windowed = true;
     bool _frameOpen = false;
+    bool _loggedMidFrameReadback = false;
     bool _initialized = false;
     WindowMode _windowMode = WindowMode::Windowed;
     std::unique_ptr<MTL::ClearColor> _clearColor;

@@ -64,6 +64,10 @@ class Texture : public RemoveLLinks
     //! routing; computed once and cached by the backend. Default: opaque.
     virtual AlphaStats::Kind GetAlphaClass() { return AlphaStats::Opaque; }
 
+    //! True while this logical texture still resolves to a live GPU surface.
+    //! Font atlases use this to recreate pages after a backend hot reload.
+    virtual bool IsGpuResident() const { return true; }
+
     // some APIs (Glide) require u,v conversion
     virtual float UToPhysical(float u) const { return u; }
     virtual float VToPhysical(float v) const { return v; }

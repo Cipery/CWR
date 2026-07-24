@@ -215,6 +215,7 @@ class TextureGL33 : public Texture
     }
 
     Poseidon::AlphaStats::Kind GetAlphaClass() override;
+    bool IsGpuResident() const override { return GetHandle() != 0; }
 
     Color GetPixel(int level, float u, float v) const override;
     Color GetColor() override
