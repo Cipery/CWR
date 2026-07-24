@@ -107,8 +107,12 @@ Goal: `PoseidonGame` builds on macOS arm64.
 - [ ] Arch reporting: `OptionsUIApp.cpp:119-124` labels every non-x86-64 build "x86" — recognize `__aarch64__`/`__arm64__`
 - Verify: binary links, `--help`/version runs **and reports arm64**
 
-### Phase 2 — Window + renderer bring-up
+### Phase 2 — Window + renderer bring-up ✅ GOAL REACHED / ⏭ remainder superseded (2026-07-24)
 Goal: main menu renders; with game data, gameplay smoke test.
+
+> **Reached same-day:** menu + mission gameplay work on Apple Silicon (GL 4.1-on-Metal context granted for the 3.3 request). Retina/HiDPI fixed (`nativePixelDensity` option, default off on macOS — was rendering 4x pixels). Audio works. Perf instrumentation added (26 trace sites) → per-draw UBO sync stalls found and fixed (Pass1 37 ms → 4.4 ms session avg). Remaining ceiling: ~40 µs/draw-call CPU overhead of Apple's GL→Metal translation layer (town views, ~1.7k calls → ~70 ms) — **not worth fighting; see strategy update below**. Un-done items (capability-gating, glGetError fallback, clip-control depth fix, GL debugging story) are deliberately DEFERRED — they polish a backend that is now reference-only.
+
+> **⚡ Strategy update (2026-07-24): Metal backend (Phase 4) pulled forward.** Native Metal removes the per-draw overhead (~1-2 µs/call) AND natively uses the zero-to-one depth convention the engine wants (fixes the clip-control precision loss for free). GL33 stays as the working reference backend for A/B validation. Work proceeds on the `metal-backend` branch off `macos-port`; `macos-port` remains the always-playable baseline.
 - [ ] SDL3 window on Cocoa, GL context creation; assert what macOS actually returns for a 3.3-core request
 - [ ] **Capability-gate the unguarded GL usage:** program-binary shader cache (`GL_NUM_PROGRAM_BINARY_FORMATS` == 0 on macOS → disable cache gracefully), `glTexStorage2D` (verify `ARB_texture_storage` presence), clip-control fallback (verify shadow/depth precision artifacts)
 - [ ] Verify every inline GLSL 330 shader compiles under Apple's stricter Core-profile GLSL compiler

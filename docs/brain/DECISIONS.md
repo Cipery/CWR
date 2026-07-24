@@ -6,6 +6,17 @@ capture the *reasoning* a future reader can't recover from the diff.
 
 ---
 
+### 2026-07-24 · Metal backend pulled forward; stop GL perf tuning
+Gameplay works on GL but town views are draw-call-bound (~40 µs/call CPU in Apple's
+GL→Metal translation layer; measured via perf traces after UBO stalls were fixed).
+— *Why:* fighting a deprecated translation layer is sunk cost when native Metal
+(~1-2 µs/call) is the plan anyway, and Metal's native zero-to-one depth also fixes
+the clip-control precision loss. *Alternatives rejected:* deeper GL batching/state
+reduction — diminishing returns on a backend that becomes reference-only.
+Mechanics: `metal-backend` branch off `macos-port`; `macos-port` stays the playable
+baseline; GL33 kept for A/B validation. UBO ring-buffer fix committed on
+session-wide trace evidence (8× avg improvement) without a town A/B (user call).
+
 ### 2026-07-24 · Target arm64 (Apple Silicon) only
 No x86_64/universal binary for now. — *Why:* the dev machine is Apple Silicon and
 universal builds are pure build-matrix overhead until there is a distribution need.

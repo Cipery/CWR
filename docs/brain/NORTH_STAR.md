@@ -20,7 +20,9 @@ locked repository — no PRs accepted there; all work lives on the `Cipery/CWR` 
 - `thirdparty/` is excluded from the project GPL (vendored code, own licenses).
 
 ## Current status (keep fresh)
-**Phase 0 complete (2026-07-24):** engine core + all headless targets (server/tools/
-evaluator) build and run natively on macOS arm64; server world-inits against real game
-data; Rust crates build. See `../MACOS_PORT.md` Phase 0 banner for caveats.
-Next: Phase 1 — full client compile & link (`PoseidonGame`).
+**Playable on Apple Silicon (2026-07-24):** Phases 0-2 done in one day — client runs,
+menu + missions play, audio works, HiDPI fixed, UBO sync stalls fixed. Remaining perf
+ceiling = Apple GL translation layer (~40 µs/draw call) → **Metal backend pulled
+forward** (see [[DECISIONS]]); work happens on `metal-backend` branch, `macos-port`
+stays the playable baseline. Phase 3 (packaging/CI/paths) intentionally open.
+Caveat: Windows/Linux builds untested since the port started (no CI yet).
