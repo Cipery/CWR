@@ -83,6 +83,10 @@ typedef size_t SIZE_T;
 #define __cdecl
 #define WINAPI
 
+#ifdef __APPLE__
+// macOS removed the legacy BSD finite(); isfinite is the standard replacement
+#define finite(x) isfinite(x)
+#endif
 #define _finite(x) finite(x)
 #define _isnan(x) isnan(x)
 extern char* strDup(const char* src);

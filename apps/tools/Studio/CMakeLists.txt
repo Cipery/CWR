@@ -38,12 +38,19 @@ if(WIN32)
         legacy_stdio_definitions.lib
     )
 else()
-    target_link_libraries(PoseidonStudio PRIVATE
-        -Wl,--start-group
-        Poseidon PoseidonOpenAL
-        -Wl,--end-group
-        pthread dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonStudio PRIVATE
+            Poseidon PoseidonOpenAL
+            pthread dl
+        )
+    else()
+        target_link_libraries(PoseidonStudio PRIVATE
+            -Wl,--start-group
+            Poseidon PoseidonOpenAL
+            -Wl,--end-group
+            pthread dl
+        )
+    endif()
 endif()
 
 target_include_directories(PoseidonStudio PRIVATE

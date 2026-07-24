@@ -559,12 +559,19 @@ if(WIN32)
         legacy_stdio_definitions.lib  # Legacy CRT functions (swprintf, etc.)
     )
 else()
-    target_link_libraries(PoseidonTests PRIVATE
-        -Wl,--start-group
-        PoseidonGL33 Poseidon PoseidonOpenAL
-        -Wl,--end-group
-        pthread dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonTests PRIVATE
+            PoseidonGL33 Poseidon PoseidonOpenAL
+            pthread dl
+        )
+    else()
+        target_link_libraries(PoseidonTests PRIVATE
+            -Wl,--start-group
+            PoseidonGL33 Poseidon PoseidonOpenAL
+            -Wl,--end-group
+            pthread dl
+        )
+    endif()
 endif()
 
 # Add link directory for external libs (eaxguid.lib)

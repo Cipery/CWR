@@ -13,6 +13,16 @@ class PoSemaphore : public RefCountSafe
 
     HANDLE handle;
 
+#elif defined(__APPLE__)
+
+    mutable pthread_mutex_t semaphoreMutex;
+
+    pthread_cond_t semaphoreCondition;
+
+    long semaphoreValue;
+
+    bool semaphoreInitialized;
+
 #else
 
     sem_t sem;
@@ -208,4 +218,3 @@ class PoSemaphoreTitbit : public PoSemaphore
 };
 
 } // namespace Poseidon::Foundation
-

@@ -31,10 +31,6 @@
 
 namespace Poseidon::Foundation
 {
-#ifndef _WIN32
-extern pthread_mutex_t mutexInit;
-#endif
-
 class PoCriticalSection : public Poseidon::Foundation::RefCount
 {
   protected:
@@ -103,4 +99,3 @@ class PoCriticalSection : public Poseidon::Foundation::RefCount
 };
 
 } // namespace Poseidon::Foundation
-

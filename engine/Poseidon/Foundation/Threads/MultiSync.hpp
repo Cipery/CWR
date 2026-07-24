@@ -164,7 +164,15 @@ class Mutex: public SignaledObject
 	public:
 	Mutex ()
 	{
-	    mutex = mutexInit;
+	    pthread_mutexattr_t attr;
+	    pthread_mutexattr_init(&attr);
+	    pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE);
+	    pthread_mutex_init(&mutex,&attr);
+	    pthread_mutexattr_destroy(&attr);
+	}
+	~Mutex ()
+	{
+	    pthread_mutex_destroy(&mutex);
 	}
 	void Unlock () const
 	{
@@ -181,23 +189,55 @@ class Mutex: public SignaledObject
 class Semaphore: public SignaledObject
 {
         protected:
+#ifdef __APPLE__
+	mutable pthread_mutex_t mutex;
+	mutable long value;
+#else
 	mutable sem_t sem;
+#endif
 
 	public:
 	Semaphore ( int init=0, int max=INT_MAX )
 	{
+#ifdef __APPLE__
+	    (void)max;
+	    pthread_mutex_init(&mutex,nullptr);
+	    value = init;
+#else
 	    sem_init(&sem,0,(unsigned)init);
+#endif
+	}
+	~Semaphore ()
+	{
+#ifdef __APPLE__
+	    pthread_mutex_destroy(&mutex);
+#else
+	    sem_destroy(&sem);
+#endif
 	}
 	bool Unlock ( int count=1 ) const
 	{
+#ifdef __APPLE__
+	    pthread_mutex_lock(&mutex);
+	    while ( count-- > 0 )
+	        if ( value < LONG_MAX ) value++;
+	    pthread_mutex_unlock(&mutex);
+#else
 	    while ( count-- > 0 )
 	        sem_post(&sem);
+#endif
 	    return TRUE;
 	}
 	bool IsLocked () const
 	{
+#ifdef __APPLE__
+	    pthread_mutex_lock(&mutex);
+	    long val = value;
+	    pthread_mutex_unlock(&mutex);
+#else
 	    int val = 0;
 	    if ( sem_getvalue(&sem,&val) != 0 ) val = 0;
+#endif
 	    return( val != 0 );
 	}
 };
@@ -210,7 +250,11 @@ class CriticalSection
 	public:
 	CriticalSection ()
 	{
-	    mutex = mutexInit;
+	    pthread_mutexattr_t attr;
+	    pthread_mutexattr_init(&attr);
+	    pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE);
+	    pthread_mutex_init(&mutex,&attr);
+	    pthread_mutexattr_destroy(&attr);
 	}
 	~CriticalSection ()
 	{

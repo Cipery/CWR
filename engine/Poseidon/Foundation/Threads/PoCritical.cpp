@@ -6,7 +6,22 @@ namespace Poseidon::Foundation
 
 #ifndef _WIN32
 
-pthread_mutex_t mutexInit = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+namespace
+{
+bool initializeRecursiveMutex(pthread_mutex_t& mutex)
+{
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) != 0)
+    {
+        return false;
+    }
+
+    const int setTypeResult = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    const int initResult = setTypeResult == 0 ? pthread_mutex_init(&mutex, &attr) : setTypeResult;
+    pthread_mutexattr_destroy(&attr);
+    return initResult == 0;
+}
+} // namespace
 
 #endif
 
@@ -22,10 +37,13 @@ PoCriticalSection::PoCriticalSection(const char* srcFile, int lineNo, const char
 #ifdef _WIN32
     InitializeCriticalSection(&cs);
 #else
-    mutex = mutexInit;
+    if (!initializeRecursiveMutex(mutex))
+    {
+        valid = false;
+    }
 #endif
     id = registerLock(srcFile, lineNo, descr);
-    error = false;
+    error = !valid;
 }
 
 void PoCriticalSection::registerMe(const char* srcFile, int lineNo, const char* descr)
@@ -43,10 +61,13 @@ PoCriticalSection::PoCriticalSection(bool val)
 #ifdef _WIN32
         InitializeCriticalSection(&cs);
 #else
-        mutex = mutexInit;
+        if (!initializeRecursiveMutex(mutex))
+        {
+            valid = false;
+        }
 #endif
     }
-    error = false;
+    error = val && !valid;
 #ifdef LOCK_TRACING
     id = -1;
 #endif
@@ -58,9 +79,12 @@ PoCriticalSection::PoCriticalSection()
 #ifdef _WIN32
     InitializeCriticalSection(&cs);
 #else
-    mutex = mutexInit;
+    if (!initializeRecursiveMutex(mutex))
+    {
+        valid = false;
+    }
 #endif
-    error = false;
+    error = !valid;
 #ifdef LOCK_TRACING
     id = -1;
 #endif

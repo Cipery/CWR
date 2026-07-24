@@ -7,9 +7,11 @@
 #include <Poseidon/Foundation/Math/V3Quads.hpp>
 #include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Foundation/Math/Math3D.hpp>
-#ifdef _MSC_VER
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include "sse2neon.h"
+#elif defined(_MSC_VER)
 #include <intrin.h> // For MMX intrinsics
-#else
+#elif defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #include <x86intrin.h>
 #endif
 
@@ -21,8 +23,8 @@
 #define _COMPILER_CAN_PIII 1
 #endif
 
-// MMX intrinsics not available on x64, disable PIII optimizations
-#if defined(_M_X64) || defined(_M_AMD64)
+// MMX intrinsics not available on x64 or Arm64, disable PIII optimizations
+#if defined(_M_X64) || defined(_M_AMD64) || defined(_M_ARM64) || defined(__aarch64__)
 #undef _COMPILER_CAN_PIII
 #define _COMPILER_CAN_PIII 0
 #endif

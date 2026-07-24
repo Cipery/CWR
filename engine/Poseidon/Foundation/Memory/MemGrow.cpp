@@ -2,13 +2,17 @@
 #include <Poseidon/Foundation/Memory/MemGrow.hpp>
 #include <Poseidon/Core/Global.hpp>
 #include <Poseidon/Foundation/Common/Win.h>
-#ifndef _WIN32
+#if defined(__linux__)
 #include <linux/sysinfo.h>
 #endif
 #include <Poseidon/Foundation/Framework/AppFrame.hpp>
 #ifndef _WIN32
 #include <sys/mman.h>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif defined(__linux__)
 #include <sys/sysinfo.h>
+#endif
 #include <unistd.h>
 #endif
 
@@ -141,6 +145,17 @@ bool MemGrow::Commit(size_t size)
                          static_cast<unsigned long long>(ConvertToMB(mstat.dwTotalPageFile)),
                          static_cast<unsigned long long>(ConvertToMB(mstat.dwAvailPageFile)),
                          static_cast<unsigned long long>(ConvertToMB(mstat.dwTotalPageFile - mstat.dwAvailPageFile)));
+#elif defined(__APPLE__)
+            struct xsw_usage xsw{};
+            size_t len = sizeof(xsw);
+            sysctlbyname("vm.swapusage", &xsw, &len, nullptr, 0);
+            ErrorMessage("Cannot increase memory pool to %llu MB.\\n"
+                         "Current memory pool size is %llu MB.\\n"
+                         "Total swap: %llu MB, Free swap: %llu MB",
+                         static_cast<unsigned long long>(ConvertToMB(size)),
+                         static_cast<unsigned long long>(ConvertToMB(_commited)),
+                         static_cast<unsigned long long>(ConvertToMB(static_cast<size_t>(xsw.xsu_total))),
+                         static_cast<unsigned long long>(ConvertToMB(static_cast<size_t>(xsw.xsu_avail))));
 #else
             struct sysinfo si;
             sysinfo(&si);

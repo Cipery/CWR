@@ -49,14 +49,23 @@ if(WIN32)
         legacy_stdio_definitions.lib
     )
 else()
-    target_link_libraries(PoseidonServer PRIVATE
-        -Wl,--start-group
-        GameBase
-        Poseidon
-        -Wl,--end-group
-        pthread
-        dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonServer PRIVATE
+            GameBase
+            Poseidon
+            pthread
+            dl
+        )
+    else()
+        target_link_libraries(PoseidonServer PRIVATE
+            -Wl,--start-group
+            GameBase
+            Poseidon
+            -Wl,--end-group
+            pthread
+            dl
+        )
+    endif()
 endif()
 
 # Set subsystem to Console (Windows only)

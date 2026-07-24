@@ -26,9 +26,13 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         set_target_properties(PoseidonFormatsDLL PROPERTIES
             POSITION_INDEPENDENT_CODE ON
         )
-        target_link_libraries(PoseidonFormatsDLL PRIVATE
-            -Wl,--start-group Poseidon -Wl,--end-group
-        )
+        if(APPLE)
+            target_link_libraries(PoseidonFormatsDLL PRIVATE Poseidon)
+        else()
+            target_link_libraries(PoseidonFormatsDLL PRIVATE
+                -Wl,--start-group Poseidon -Wl,--end-group
+            )
+        endif()
         target_link_options(PoseidonFormatsDLL PRIVATE -Wl,-Bsymbolic)
     endif()
     set_target_properties(PoseidonFormatsDLL PROPERTIES

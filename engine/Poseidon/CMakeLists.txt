@@ -258,6 +258,7 @@ target_include_directories(Poseidon PUBLIC
     ${CMAKE_SOURCE_DIR}/engine
     ${CMAKE_SOURCE_DIR}/thirdparty
     ${CMAKE_SOURCE_DIR}/thirdparty/glad/include
+    ${CMAKE_SOURCE_DIR}/thirdparty/sse2neon
 )
 
 # ============================================================

@@ -19,12 +19,19 @@ if(WIN32)
         legacy_stdio_definitions.lib
     )
 else()
-    target_link_libraries(PoseidonServerTests PRIVATE
-        -Wl,--start-group
-        Poseidon
-        -Wl,--end-group
-        pthread dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonServerTests PRIVATE
+            Poseidon
+            pthread dl
+        )
+    else()
+        target_link_libraries(PoseidonServerTests PRIVATE
+            -Wl,--start-group
+            Poseidon
+            -Wl,--end-group
+            pthread dl
+        )
+    endif()
 endif()
 
 # Disable SafeSEH for compatibility with legacy external .obj files

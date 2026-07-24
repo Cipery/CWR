@@ -58,16 +58,27 @@ if(WIN32)
         legacy_stdio_definitions.lib
     )
 else()
-    target_link_libraries(PoseidonGame PRIVATE
-        -Wl,--start-group
-        GameBase
-        PoseidonGL33
-        Poseidon
-        PoseidonOpenAL
-        -Wl,--end-group
-        pthread
-        dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonGame PRIVATE
+            GameBase
+            PoseidonGL33
+            Poseidon
+            PoseidonOpenAL
+            pthread
+            dl
+        )
+    else()
+        target_link_libraries(PoseidonGame PRIVATE
+            -Wl,--start-group
+            GameBase
+            PoseidonGL33
+            Poseidon
+            PoseidonOpenAL
+            -Wl,--end-group
+            pthread
+            dl
+        )
+    endif()
 endif()
 
 # Use WINDOWS subsystem (WIN32 flag); AttachConsole at runtime handles CLI output

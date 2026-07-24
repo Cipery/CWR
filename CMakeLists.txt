@@ -47,11 +47,11 @@ if(WIN32)
     add_compile_options(/Gy /Gw)
 else()
     add_compile_definitions(
-        HAS_CLOCK_GETTIME   # Linux: use clock_gettime in potime.cpp
+        HAS_CLOCK_GETTIME   # POSIX: use clock_gettime in potime.cpp
     )
 
     # Equivalent of MSVC /Gy /Gw — per-function/per-data sections so the
-    # linker (--gc-sections) can dead-strip unused symbols.
+    # linker can dead-strip unused symbols.
     add_compile_options(-ffunction-sections -fdata-sections)
 endif()
 
@@ -349,6 +349,19 @@ if(WIN32)
         COMMENT "Formatting C++ sources with clang-format"
         VERBATIM
     )
+elseif(APPLE)
+    add_custom_target(Format
+        COMMAND /bin/sh -c "xargs '${CLANG_FORMAT_EXE}' --dry-run --Werror < '${CMAKE_BINARY_DIR}/format_sources.txt'"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Checking C++ formatting (fails if changes needed)"
+        VERBATIM
+    )
+    add_custom_target(FormatFix
+        COMMAND /bin/sh -c "xargs '${CLANG_FORMAT_EXE}' -i < '${CMAKE_BINARY_DIR}/format_sources.txt'"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Formatting C++ sources with clang-format"
+        VERBATIM
+    )
 else()
     add_custom_target(Format
         COMMAND xargs -a ${CMAKE_BINARY_DIR}/format_sources.txt ${CLANG_FORMAT_EXE} --dry-run --Werror
@@ -410,6 +423,19 @@ if(CLANG_TIDY_EXE)
         )
         add_custom_target(TidyFix
             COMMAND powershell -NoProfile -Command "Get-Content ${CMAKE_BINARY_DIR}/tidy_sources.txt | ForEach-Object { & '${CLANG_TIDY_EXE}' -p ${CMAKE_BINARY_DIR} --allow-no-checks --fix-errors --fix $_ }"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running clang-tidy with automatic fixes (including compilation errors)"
+            VERBATIM
+        )
+    elseif(APPLE)
+        add_custom_target(Tidy
+            COMMAND /bin/sh -c "xargs '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks < '${CMAKE_BINARY_DIR}/tidy_sources.txt'"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running clang-tidy on all sources"
+            VERBATIM
+        )
+        add_custom_target(TidyFix
+            COMMAND /bin/sh -c "xargs '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks --fix-errors --fix < '${CMAKE_BINARY_DIR}/tidy_sources.txt'"
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Running clang-tidy with automatic fixes (including compilation errors)"
             VERBATIM

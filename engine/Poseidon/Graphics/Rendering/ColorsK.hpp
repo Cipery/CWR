@@ -2,7 +2,12 @@
 int toInt(float fval);
 int toInt(double f);
 
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #include <xmmintrin.h>
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#include "sse2neon.h"
+#endif
+
 #include <Poseidon/Foundation/platform.hpp>
 #include <Poseidon/Foundation/Math/MathDefs.hpp>
 

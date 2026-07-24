@@ -27,10 +27,11 @@ an Opus review of the same code missed it — don't trust a single reviewer on G
 **Symptom:** arm64 build succeeds, threaded code deadlocks/fails at runtime on macOS.
 **Cause:** `PoSemaphore.cpp`/`MultiSync.hpp` use unnamed POSIX semaphores (`sem_init` = ENOSYS
 stub on Darwin) and `PoCritical.cpp` uses glibc-only `PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP`
-with a copy-assign init idiom. Both compile cleanly. **Fix:** Darwin backends
-(`dispatch_semaphore_t`, `pthread_mutex_init` + recursive attr) — see `../MACOS_PORT.md`
-Phase 0. Lesson: for this codebase, "it compiles on macOS" proves nothing about threads —
-smoke-run a threaded binary.
+with a copy-assign init idiom. Both compile cleanly. **Fix:** Darwin semaphore counters use
+`pthread_mutex_t` + `pthread_cond_t` (rather than dispatch semaphores, because callers need
+an exact `getValue()` snapshot); recursive locks use `pthread_mutex_init` + recursive attrs.
+See `../MACOS_PORT.md` Phase 0. Lesson: for this codebase, "it compiles on macOS" proves
+nothing about threads — smoke-run a threaded binary.
 
 ### Game data — Parallels VM disk does not automount to /Volumes
 **Symptom:** Windows 11 VM's C: drive never appears under `/Volumes` even with Guest

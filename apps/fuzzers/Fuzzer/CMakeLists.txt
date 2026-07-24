@@ -33,13 +33,21 @@ function(add_fuzzer name source)
         # Linux clang links the full libFuzzer + ASan + UBSan runtime from the
         # driver flag; no explicit clang_rt naming is needed.
         target_link_options(${name} PRIVATE -fsanitize=fuzzer,address,undefined)
-        target_link_libraries(${name} PRIVATE
-            -Wl,--start-group
-            Poseidon
-            -Wl,--end-group
-            pthread
-            dl
-        )
+        if(APPLE)
+            target_link_libraries(${name} PRIVATE
+                Poseidon
+                pthread
+                dl
+            )
+        else()
+            target_link_libraries(${name} PRIVATE
+                -Wl,--start-group
+                Poseidon
+                -Wl,--end-group
+                pthread
+                dl
+            )
+        endif()
     endif()
 endfunction()
 

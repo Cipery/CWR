@@ -384,8 +384,11 @@ inline float Invert(Fixed a)
 
 #define CalcZHDelta(beg, end, invDist) fixed(fxToFloat(end - beg) * invDist)
 
-#if _COMPILER_CAN_MMX
+#if _COMPILER_CAN_MMX && \
+    (defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__))
 #define OPTIMIZE_FOR_MMX 1
+#else
+#define OPTIMIZE_FOR_MMX 0
 #endif
 
 #if SIMD || SIMD2

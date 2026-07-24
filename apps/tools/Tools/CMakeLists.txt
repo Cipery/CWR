@@ -59,15 +59,25 @@ if(WIN32)
             winmm
     )
 else()
-    target_link_libraries(PoseidonTools
-        PRIVATE
-            -Wl,--start-group
-            Poseidon
-            PoseidonOpenAL
-            -Wl,--end-group
-            CLI11::CLI11
-            SDL3::SDL3
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonTools
+            PRIVATE
+                Poseidon
+                PoseidonOpenAL
+                CLI11::CLI11
+                SDL3::SDL3
+        )
+    else()
+        target_link_libraries(PoseidonTools
+            PRIVATE
+                -Wl,--start-group
+                Poseidon
+                PoseidonOpenAL
+                -Wl,--end-group
+                CLI11::CLI11
+                SDL3::SDL3
+        )
+    endif()
 endif()
 
 target_include_directories(PoseidonTools

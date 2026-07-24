@@ -45,10 +45,17 @@ if(WIN32)
         winmm.lib version.lib ws2_32.lib legacy_stdio_definitions.lib
     )
 else()
-    target_link_libraries(PoseidonGameDemo PRIVATE
-        -Wl,--start-group GameBase PoseidonGL33 Poseidon PoseidonOpenAL -Wl,--end-group
-        pthread dl
-    )
+    if(APPLE)
+        target_link_libraries(PoseidonGameDemo PRIVATE
+            GameBase PoseidonGL33 Poseidon PoseidonOpenAL
+            pthread dl
+        )
+    else()
+        target_link_libraries(PoseidonGameDemo PRIVATE
+            -Wl,--start-group GameBase PoseidonGL33 Poseidon PoseidonOpenAL -Wl,--end-group
+            pthread dl
+        )
+    endif()
 endif()
 
 if(MSVC OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))

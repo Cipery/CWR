@@ -3,6 +3,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #else
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include <unistd.h>
 #include <limits.h>
 #ifndef MAX_PATH
@@ -32,6 +35,30 @@ inline const char* GetExecutableDirectory()
             *lastSlash = '\0';
             strcpy(exeDir, exePath);
         }
+#elif defined(__APPLE__)
+        char exePath[MAX_PATH];
+        uint32_t pathSize = sizeof(exePath);
+        char* path = exePath;
+        char* allocatedPath = nullptr;
+        if (_NSGetExecutablePath(path, &pathSize) != 0)
+        {
+            allocatedPath = static_cast<char*>(malloc(pathSize));
+            path = allocatedPath;
+            if (!path || _NSGetExecutablePath(path, &pathSize) != 0)
+                path = nullptr;
+        }
+
+        char canonicalPath[PATH_MAX];
+        if (path && realpath(path, canonicalPath))
+        {
+            char* lastSlash = strrchr(canonicalPath, '/');
+            if (lastSlash)
+            {
+                *lastSlash = '\0';
+                strcpy(exeDir, canonicalPath);
+            }
+        }
+        free(allocatedPath);
 #else
         char exePath[MAX_PATH];
         ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);

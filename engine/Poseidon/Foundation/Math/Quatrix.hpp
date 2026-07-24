@@ -1,8 +1,10 @@
 #pragma once
 
-#ifdef _MSC_VER
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include "sse2neon.h"
+#elif defined(_MSC_VER)
 #include <intrin.h>
-#else
+#elif defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #include <xmmintrin.h>
 #endif
 

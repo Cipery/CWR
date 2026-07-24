@@ -115,7 +115,12 @@ void InstallCrashHandler(const char*)
 #include <fcntl.h>
 #include <execinfo.h>
 #include <sys/resource.h>
+#ifdef __linux__
 #include <link.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#endif
 
 namespace Poseidon::Foundation
 {
@@ -124,7 +129,7 @@ namespace
 constexpr int kFatalSignals[] = {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS};
 
 char g_crashPath[4096];
-char g_buildId[80]; // hex of the main object's NT_GNU_BUILD_ID
+char g_buildId[80]; // hex of the main executable's platform build identifier
 volatile sig_atomic_t g_inHandler = 0;
 char g_altStack[65536]; // SIGSTKSZ is not a compile-time constant on modern glibc
 
@@ -191,6 +196,7 @@ const char* signalName(int sig)
     }
 }
 
+#ifndef __APPLE__
 void copyFileTo(int dstFd, const char* path)
 {
     int src = open(path, O_RDONLY);
@@ -206,6 +212,7 @@ void copyFileTo(int dstFd, const char* path)
     }
     close(src);
 }
+#endif
 
 void handler(int sig, siginfo_t* info, void* /*ucontext*/)
 {
@@ -245,8 +252,13 @@ void handler(int sig, siginfo_t* info, void* /*ucontext*/)
     // Module load bases — only to the file; keeps the terminal output short.
     if (fd >= 0)
     {
+#ifdef __APPLE__
+        // Full Mach region output is deferred to Phase 3.
+        emit(fd, -1, "\nmemory map unavailable on this platform (TODO Phase 3: mach_vm_region)\n");
+#else
         emit(fd, -1, "\n/proc/self/maps:\n");
         copyFileTo(fd, "/proc/self/maps");
+#endif
         close(fd);
     }
 
@@ -261,6 +273,7 @@ void handler(int sig, siginfo_t* info, void* /*ucontext*/)
 void captureBuildId()
 {
     g_buildId[0] = '\0';
+#ifdef __linux__
     dl_iterate_phdr(
         [](struct dl_phdr_info* info, size_t, void*) -> int
         {
@@ -296,6 +309,40 @@ void captureBuildId()
             return 1; // only inspect the main executable (the first entry)
         },
         nullptr);
+#elif defined(__APPLE__)
+    for (uint32_t imageIndex = 0; imageIndex < _dyld_image_count(); imageIndex++)
+    {
+        const mach_header* header = _dyld_get_image_header(imageIndex);
+        if (!header || header->filetype != MH_EXECUTE || header->magic != MH_MAGIC_64)
+            continue;
+
+        const auto* header64 = reinterpret_cast<const mach_header_64*>(header);
+        const char* commands = reinterpret_cast<const char*>(header64 + 1);
+        size_t offset = 0;
+        for (uint32_t commandIndex = 0; commandIndex < header64->ncmds; commandIndex++)
+        {
+            if (offset + sizeof(load_command) > header64->sizeofcmds)
+                break;
+            const auto* command = reinterpret_cast<const load_command*>(commands + offset);
+            if (command->cmdsize < sizeof(load_command) || offset + command->cmdsize > header64->sizeofcmds)
+                break;
+            if (command->cmd == LC_UUID && command->cmdsize >= sizeof(uuid_command))
+            {
+                const auto* uuid = reinterpret_cast<const uuid_command*>(command);
+                char* w = g_buildId;
+                static const char hex[] = "0123456789abcdef";
+                for (unsigned char byte : uuid->uuid)
+                {
+                    *w++ = hex[byte >> 4];
+                    *w++ = hex[byte & 0xF];
+                }
+                *w = '\0';
+                return;
+            }
+            offset += command->cmdsize;
+        }
+    }
+#endif
 }
 } // namespace
 
