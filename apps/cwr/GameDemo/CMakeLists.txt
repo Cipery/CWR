@@ -20,6 +20,11 @@ endif()
 target_compile_definitions(PoseidonGameDemo PRIVATE
     $<$<CONFIG:Debug>:_DEBUG>
 )
+if(APPLE AND CWR_HAS_METAL)
+    target_compile_definitions(PoseidonGameDemo PRIVATE CWR_HAS_METAL)
+    target_link_libraries(PoseidonGameDemo PRIVATE PoseidonMetal)
+    add_dependencies(PoseidonGameDemo PoseidonMetalShaders)
+endif()
 if(WIN32)
     target_compile_definitions(PoseidonGameDemo PRIVATE _WINDOWS)
 endif()

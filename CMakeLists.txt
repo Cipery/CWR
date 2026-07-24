@@ -142,8 +142,9 @@ add_compile_options(
 enable_testing()
 
 # Backend availability — driven by platform, overridable
-option(CWR_HAS_OPENGL    "OpenGL 4.5 graphics backend"  ON)
+option(CWR_HAS_OPENGL    "OpenGL 3.3 graphics backend"  ON)
 option(CWR_HAS_OPENAL    "OpenAL audio backend"          ON)
+option(CWR_HAS_METAL     "Metal 3 graphics backend (macOS)" ${APPLE})
 
 # Disable precompiled headers — for include self-containment audits. With PCH off
 # the prelude is no longer force-included, so every TU must pull what it uses;
@@ -193,6 +194,9 @@ set(DIST_DIR "${CMAKE_SOURCE_DIR}/dist/${DIST_PRESET_NAME}")
 
 add_subdirectory(engine/Poseidon)
 add_subdirectory(engine/PoseidonGL33)
+if(APPLE AND CWR_HAS_METAL)
+    add_subdirectory(engine/PoseidonMetal)
+endif()
 add_subdirectory(engine/PoseidonOpenAL)
 add_subdirectory(engine/PoseidonFormats)
 add_subdirectory(tests/unit/engine/Poseidon/Foundation)

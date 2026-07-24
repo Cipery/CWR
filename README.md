@@ -27,6 +27,11 @@ cmake --build build/win-x64-clang-rwdi
 
 On GNU/Linux, use the matching `linux-x64-clang-rwdi` preset.
 
+On macOS, provision the shader compiler once with
+`xcodebuild -downloadComponent MetalToolchain`, then use the
+`macos-arm64-clang-rwdi` preset. Metal builds can instead opt into the
+toolchain-less source fallback with `-DCWR_METAL_RUNTIME_SHADERS=ON`.
+
 ## Layout
 
 - [Apps](apps/README.md) - executable targets

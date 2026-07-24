@@ -30,6 +30,21 @@ instances after `gl_InstanceID == 0` use uninitialized transforms. **Cause:** `E
 slot there replaces the complete range bound by `UploadWorldInstances`. **Fix:** scalar draws
 allocate and bind a ring slot, but `_instCount > 1` preserves the range uploaded at run start.
 
+### Renderer — metal-cpp macOS 15 omits two live CAMetalLayer properties
+**Symptom:** the M0 design calls for `setMaximumDrawableCount(3)` and a live vsync toggle, but
+the vendored macOS 15 / iOS 18 `CA::MetalLayer` wrapper has neither
+`maximumDrawableCount` nor `displaySyncEnabled`. **Cause:** those SDK properties were not
+included in metal-cpp's QuartzCore surface even though they exist in `CAMetalLayer.h`.
+**Fix:** keep a local pure-C++ shim in `EngineMetal_Window.cpp` that invokes only those two
+setters through metal-cpp's `NS::Object::sendMessage` and `sel_registerName`; do not add an
+Objective-C++ TU or release the borrowed layer.
+
+**Firewall rule:** **Symptom:** a TU that sees Poseidon's `typedef int BOOL` before metal-cpp
+fails when metal-cpp pulls in `objc/objc.h` and its incompatible `BOOL`. **Rule:** never include
+Foundation, Metal, or QuartzCore metal-cpp headers from `PoseidonMetal` interface headers; use
+`MetalFwd.hpp` there. The sole implementation-only umbrella is the private `MetalCppFirst.hpp`,
+which must be included first in every metal-cpp implementation TU.
+
 ### Threads — Foundation/Threads compiles on macOS but is runtime-broken (build gate lies)
 **Symptom:** arm64 build succeeds, threaded code deadlocks/fails at runtime on macOS.
 **Cause:** `PoSemaphore.cpp`/`MultiSync.hpp` use unnamed POSIX semaphores (`sem_init` = ENOSYS

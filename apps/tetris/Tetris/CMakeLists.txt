@@ -22,6 +22,11 @@ endif()
 target_compile_definitions(PoseidonTetris PRIVATE
     $<$<CONFIG:Debug>:_DEBUG>
 )
+if(APPLE AND CWR_HAS_METAL)
+    target_compile_definitions(PoseidonTetris PRIVATE CWR_HAS_METAL)
+    target_link_libraries(PoseidonTetris PRIVATE PoseidonMetal)
+    add_dependencies(PoseidonTetris PoseidonMetalShaders)
+endif()
 if(WIN32)
     target_compile_definitions(PoseidonTetris PRIVATE _WINDOWS)
 endif()

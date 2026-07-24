@@ -3,6 +3,7 @@
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
 #include <Poseidon/Core/Global.hpp>
 #include <Poseidon/Core/Application.hpp>
+#include <Poseidon/Foundation/Logging/Logging.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
 #include <Poseidon/IO/ParamFile/ParamFile.hpp>
 
@@ -29,6 +30,11 @@ bool gPerfDumpShadowsOnce = false;
 int gSmDepthCachedCasters = 0;
 int gShadowFrozenCasters = 0;
 int gShadowFrozenRouted = 0;
+
+void Engine::Screenshot(RString filename)
+{
+    LOG_ERROR(Graphics, "Screenshot capture is not supported by this graphics backend: {}", filename.Data());
+}
 
 Engine::Engine()
     : _showTextFont(nullptr), _showTextColor(Color(HBlack)), _showTextSize(0), _showFps(0), _messageHandle(-1),

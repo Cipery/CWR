@@ -727,7 +727,7 @@ class Engine : public IGraphicsEngine
     virtual void Deactivate() {}
     virtual void Resize(int x, int y, int w, int h) {}
 
-    virtual void Screenshot(RString filename) {}
+    virtual void Screenshot(RString filename);
     virtual void FlushPendingScreenshot() {}
 
     /// Read back a small sample of pixels from the back buffer.

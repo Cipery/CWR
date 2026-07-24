@@ -18,11 +18,15 @@ extern void SDLInput_BufferUICharEvent(const char* text);
 #include <Poseidon/Foundation/Framework/AppFrame.hpp>
 extern void SetSkipKeys(bool skip);
 
-// SDL event-pump helper used by EngineGL33.  Does NOT own the SDL_Window —
-// the renderer manages its lifecycle.  Handles SDL event polling, focus
-// tracking, and input forwarding.
+// Shared SDL event-pump helper used by the graphics backends. Does NOT own
+// the SDL_Window — the renderer manages its lifecycle. Handles SDL event
+// polling, focus tracking, and input forwarding.
 class SDLEventWindow
 {
+  public:
+    using PixelSizeChangedCallback = void (*)(void* context, int width, int height);
+
+  private:
     SDL_Window* _sdlWindow = nullptr;
     int _width = 0, _height = 0;
     bool _open = false, _resized = false;
@@ -30,17 +34,22 @@ class SDLEventWindow
     bool _mouseGrab = true;
     bool _altEnterConsumed = false;
     bool _fullscreenTransitioning = false; // blocks phantom Alt+Enter during transition
+    PixelSizeChangedCallback _pixelSizeChanged = nullptr;
+    void* _pixelSizeChangedContext = nullptr;
 
   public:
     // Attach to an existing SDL window (does not take ownership).
     // Sets GApp->m_appActive and acquires mouse.
-    void Attach(SDL_Window* window, int w, int h)
+    void Attach(SDL_Window* window, int w, int h, PixelSizeChangedCallback pixelSizeChanged = nullptr,
+                void* pixelSizeChangedContext = nullptr)
     {
         _sdlWindow = window;
         _width = w;
         _height = h;
         _open = (window != nullptr);
         _focused = true;
+        _pixelSizeChanged = pixelSizeChanged;
+        _pixelSizeChangedContext = pixelSizeChangedContext;
 
         if (_sdlWindow)
         {
@@ -58,6 +67,8 @@ class SDLEventWindow
     {
         _sdlWindow = nullptr;
         _open = false;
+        _pixelSizeChanged = nullptr;
+        _pixelSizeChangedContext = nullptr;
     }
 
     // Init unused — the renderer creates the window.
@@ -121,6 +132,16 @@ class SDLEventWindow
                 // correct final dimensions (critical for D3D11 FLIP_DISCARD).
                 if (::Poseidon::GEngine)
                     ::Poseidon::GEngine->OnWindowResized(_width, _height);
+            }
+            else if ((event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+                      event.type == SDL_EVENT_WINDOW_METAL_VIEW_RESIZED) &&
+                     _pixelSizeChanged)
+            {
+                int pixelWidth = 0;
+                int pixelHeight = 0;
+                if (_sdlWindow)
+                    SDL_GetWindowSizeInPixels(_sdlWindow, &pixelWidth, &pixelHeight);
+                _pixelSizeChanged(_pixelSizeChangedContext, pixelWidth, pixelHeight);
             }
             else if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN)
             {

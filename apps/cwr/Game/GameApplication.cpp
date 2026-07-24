@@ -119,6 +119,7 @@ extern std::function<void(uint32_t, int)> gVonReceiveCallback;
 
 #include <filesystem>
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace Poseidon
@@ -138,6 +139,36 @@ using Poseidon::GWorld;
 
 namespace
 {
+constexpr int kScreenshotFailureExitCode = 2;
+
+bool ScreenshotOutputsExist(const std::string& requestedPath)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path path(requestedPath);
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+    std::error_code ec;
+    if (extension == ".png" || extension == ".bmp")
+        return fs::exists(path, ec) && !ec;
+
+    const bool pngExists = fs::exists(fs::path(requestedPath + ".png"), ec) && !ec;
+    ec.clear();
+    const bool bmpExists = fs::exists(fs::path(requestedPath + ".bmp"), ec) && !ec;
+    return pngExists && bmpExists;
+}
+
+bool VerifyScreenshotCapture(const std::string& requestedPath)
+{
+    if (ScreenshotOutputsExist(requestedPath))
+        return true;
+
+    LOG_ERROR(Core, "Screenshot capture failed: expected output file was not created: {}", requestedPath);
+    return false;
+}
+
 // Isolated test-mission staging: --test-mission copies the mission into
 // TempDir/mission-smoke/<rand>/Missions/<name>/ and loads it from there, so the
 // game never writes a Missions/ tree into the (shared/read-only) game dir. The
@@ -954,6 +985,8 @@ void GameApplication::RunMainLoop()
         GEngine->Screenshot(screenshotPath.c_str());
         m_forceRender = true;
         Poseidon::AppIdle(); // renders frame that captures screenshot before swap
+        if (!VerifyScreenshotCapture(screenshotPath))
+            _exit(kScreenshotFailureExitCode);
         LOG_INFO(Core, "Screenshot saved to: {}", screenshotPath);
         _exit(0);
     }
@@ -1095,8 +1128,17 @@ void GameApplication::RunMainLoop()
                 GEngine->Screenshot(screenshotTestPath.c_str());
                 m_forceRender = true;
                 Poseidon::AppIdle(); // render frame that captures the screenshot
-                LOG_INFO(Core, "Screenshot test: saved to {}", screenshotTestPath);
-                LOG_INFO(Core, "AUTO-TEST SUCCESS");
+                if (VerifyScreenshotCapture(screenshotTestPath))
+                {
+                    LOG_INFO(Core, "Screenshot test: saved to {}", screenshotTestPath);
+                    LOG_INFO(Core, "AUTO-TEST SUCCESS");
+                }
+                else
+                {
+                    LOG_ERROR(Core, "AUTO-TEST FAILURE: screenshot output is missing");
+                    if (m_exitCode == 0)
+                        m_exitCode = kScreenshotFailureExitCode;
+                }
                 screenshotCaptured = true;
                 m_closeRequest = true;
             }
@@ -1111,8 +1153,17 @@ void GameApplication::RunMainLoop()
             GEngine->Screenshot(as.path.c_str());
             m_forceRender = true;
             Poseidon::AppIdle();
-            LOG_INFO(Core, "Auto-screenshot saved: frame={} t={:.1f}s -> {}", mainFrameCounter, elapsedMs / 1000.0f,
-                     as.path);
+            if (VerifyScreenshotCapture(as.path))
+            {
+                LOG_INFO(Core, "Auto-screenshot saved: frame={} t={:.1f}s -> {}", mainFrameCounter,
+                         elapsedMs / 1000.0f, as.path);
+            }
+            else
+            {
+                if (m_exitCode == 0)
+                    m_exitCode = kScreenshotFailureExitCode;
+                m_closeRequest = true;
+            }
             nextAutoScreenshot++;
             if (nextAutoScreenshot >= autoScreenshots.size())
                 m_closeRequest = true;
@@ -1307,8 +1358,17 @@ void GameApplication::RunMainLoop()
                 GEngine->Screenshot(it->path.c_str());
                 m_forceRender = true;
                 Poseidon::AppIdle();
-                LOG_INFO(Core, "Auto-screenshot saved: frame={} t={:.1f}s -> {}", mainFrameCounter, elapsedMs / 1000.0f,
-                         it->path);
+                if (VerifyScreenshotCapture(it->path))
+                {
+                    LOG_INFO(Core, "Auto-screenshot saved: frame={} t={:.1f}s -> {}", mainFrameCounter,
+                             elapsedMs / 1000.0f, it->path);
+                }
+                else
+                {
+                    if (m_exitCode == 0)
+                        m_exitCode = kScreenshotFailureExitCode;
+                    m_closeRequest = true;
+                }
                 autoScreenshotList.erase(it);
                 if (autoScreenshotList.empty())
                     m_closeRequest = true;
@@ -1371,8 +1431,17 @@ void GameApplication::RunMainLoop()
                 GEngine->Screenshot(screenshotTestPath.c_str());
                 m_forceRender = true;
                 Poseidon::AppIdle();
-                LOG_INFO(Core, "Screenshot test: saved to {}", screenshotTestPath);
-                LOG_INFO(Core, "AUTO-TEST SUCCESS");
+                if (VerifyScreenshotCapture(screenshotTestPath))
+                {
+                    LOG_INFO(Core, "Screenshot test: saved to {}", screenshotTestPath);
+                    LOG_INFO(Core, "AUTO-TEST SUCCESS");
+                }
+                else
+                {
+                    LOG_ERROR(Core, "AUTO-TEST FAILURE: screenshot output is missing");
+                    if (m_exitCode == 0)
+                        m_exitCode = kScreenshotFailureExitCode;
+                }
                 screenshotCaptured = true;
                 m_closeRequest = true;
             }
@@ -1480,6 +1549,9 @@ void GameApplication::RegisterGraphicsBackends()
 {
     RegisterDummyGraphicsBackend();
     RegisterGL33GraphicsBackend();
+#if defined(__APPLE__) && defined(CWR_HAS_METAL)
+    RegisterMetalGraphicsBackend();
+#endif
 }
 
 bool GameApplication::InitializeInput()
