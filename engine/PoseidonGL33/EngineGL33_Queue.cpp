@@ -9,6 +9,7 @@
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/Graphics/Rendering/BuildRenderPassDescriptor.hpp>
 #include <Poseidon/World/Scene/Camera/Camera.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 
 #include <glad/gl.h>
 #include <cstdio>
@@ -104,22 +105,25 @@ void EngineGL33::FlushQueue(QueueGL33& queue, int index)
 
         // Upload indices
         int indexOffset = 0;
-        int ibSize = n * sizeof(WORD);
-        Poseidon::render::ibo::BindOnActiveVao(_ibo);
+        {
+            SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 index queue upload", 1.0);
+            int ibSize = n * sizeof(WORD);
+            Poseidon::render::ibo::BindOnActiveVao(_ibo);
 
-        if (n + queue._indexBufferUsed <= IndexBufferLength && !queue._firstIndex)
-        {
-            indexOffset = queue._indexBufferUsed;
-            glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexOffset * sizeof(WORD), ibSize, triq._triangleQueue.Data());
+            if (n + queue._indexBufferUsed <= IndexBufferLength && !queue._firstIndex)
+            {
+                indexOffset = queue._indexBufferUsed;
+                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexOffset * sizeof(WORD), ibSize, triq._triangleQueue.Data());
+            }
+            else
+            {
+                queue._firstIndex = false;
+                indexOffset = 0;
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, IndexBufferLength * sizeof(WORD), nullptr, GL_DYNAMIC_DRAW);
+                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, ibSize, triq._triangleQueue.Data());
+            }
+            queue._indexBufferUsed = indexOffset + n;
         }
-        else
-        {
-            queue._firstIndex = false;
-            indexOffset = 0;
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, IndexBufferLength * sizeof(WORD), nullptr, GL_DYNAMIC_DRAW);
-            glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, ibSize, triq._triangleQueue.Data());
-        }
-        queue._indexBufferUsed = indexOffset + n;
 
         // Bind vertex buffer
         glBindBuffer(GL_ARRAY_BUFFER, _vbo);
@@ -443,6 +447,7 @@ void EngineGL33::UploadPendingVertices()
     if (_vboUploadedVerts >= used)
         return;
     const int first = _vboUploadedVerts;
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 vertex queue upload", 1.0);
     glBindBuffer(GL_ARRAY_BUFFER, _vbo);
     glBufferSubData(GL_ARRAY_BUFFER, first * sizeof(TLVertex), (used - first) * sizeof(TLVertex), &_vboMirror[first]);
     _vboUploadedVerts = used;

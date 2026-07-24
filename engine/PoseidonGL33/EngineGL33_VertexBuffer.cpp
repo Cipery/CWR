@@ -11,6 +11,7 @@
 #include <Poseidon/Graphics/Rendering/Frame/Frame.hpp>
 #include <Poseidon/Graphics/Shared/ScreenshotWriter.hpp>
 #include <Poseidon/Dev/Debug/DebugOverlay.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 
 using namespace Poseidon::Dev;
 
@@ -74,6 +75,7 @@ void VertexBufferGL33::CopyVertices(const Shape& src)
     if (_vertexCount <= 0)
         return;
 
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 vertex buffer upload", 1.0);
     glBindBuffer(GL_ARRAY_BUFFER, _vbo);
     // The map-flag combination is selected by the named helper.  There
     // is no API exposed by `Poseidon::render::buf` that maps a static buffer with
@@ -116,6 +118,7 @@ bool VertexBufferGL33::Init(const Shape& src, VBType type)
         return false;
     }
 
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 vertex/index buffer create", 1.0);
     _dynamic = (type == VBDynamic || type == VBSmallDiscardable);
     _vertexCount = src.NVertex();
 
@@ -332,9 +335,9 @@ void EngineGL33::EmitDraw(const Poseidon::render::frame::Draw& d)
     const std::intptr_t offsetBytes = Poseidon::render::frame::ComputeIndexByteOffset(d.indexBegin, sizeof(VertexIndex));
     if (_instCount > 1)
     {
-        // Instanced run: the WorldInstances UBO already holds the matrices;
-        // the per-draw upload above wrote slot 0 (= matrices[0]) again,
-        // which is harmless. gl_InstanceID selects the rest.
+        // Instanced run: UploadWorldInstances bound the range containing all
+        // matrices, and UploadVSWorldMatrix above deliberately kept it bound.
+        // gl_InstanceID selects the matrix for each instance.
         glDrawElementsInstanced(GL_TRIANGLES, d.indexCount, GL_UNSIGNED_SHORT, reinterpret_cast<void*>(offsetBytes),
                                 _instCount);
     }
@@ -652,4 +655,3 @@ bool EngineGL33::SamplePixel(int x, int y, uint8_t* outRGB)
     outRGB[2] = pixel[2];
     return true;
 }
-

@@ -79,6 +79,7 @@ void Shape::Draw(class IAnimator* matSource, const LightList& lights, ClipFlags 
                  const Matrix4& transform, const Matrix4& invTransform)
 {
 #ifndef ACCESS_ONLY
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "Shape::Draw", 2.0);
     // if engine has T&L interface, use it
     // cannot use T&L on some surface types (OnSurface?)
 

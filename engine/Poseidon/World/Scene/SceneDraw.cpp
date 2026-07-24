@@ -53,6 +53,7 @@ using Poseidon::Foundation::Time;
 #include <Poseidon/UI/Locale/StringtableExt.hpp>
 #include <time.h>
 #include <Poseidon/Dev/Diag/DiagModes.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 #include <Poseidon/World/Terrain/Occlusion.hpp>
 
 using namespace Poseidon;
@@ -1267,6 +1268,7 @@ float Scene::GetSmokeGeneralization() const
 // shape's NoDropdown faces.
 static void DrawSortObject(SortObject* oi)
 {
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "Scene::draw object", 2.0);
     Object* obj = oi->object;
     const bool cockpit =
         GWorld && oi->drawLOD != LOD_INVISIBLE && oi->drawLOD == obj->InsideLOD(GWorld->GetCameraType());
@@ -1312,11 +1314,15 @@ void Scene::DrawObjectsAndShadowsPass1()
 
     // remove all objects that should not be used
 
-    AdjustComplexity();
+    {
+        SCOPED_PERF_TIMER(Graphics, "land:obj LOD selection");
+        AdjustComplexity();
+    }
 
     // copy objects to working list (mergers)
     // do not copy objects that are not drawn
     {
+        SCOPED_PERF_TIMER(Graphics, "land:obj build draw list");
         // make smaller only when really necessary
         int objNeed = _drawObjects.Size();
         int objHave = _drawMergers.MaxSize();
@@ -1385,6 +1391,7 @@ void Scene::DrawObjectsAndShadowsPass1()
 
     if (EnableObjOcc)
     {
+        SCOPED_PERF_TIMER(Graphics, "land:obj occlusion");
         // sort only what needs to checked/drawn for occlusion
         // this will remove especially cloudlets from occlusion testing
         // it also helps to maintain _drawMergers sorted
@@ -1513,11 +1520,15 @@ void Scene::DrawObjectsAndShadowsPass1()
         }
     }
 
-    QSort(_drawMergers.Data(), _drawMergers.Size(), CmpShapeObj);
+    {
+        SCOPED_PERF_TIMER(Graphics, "land:obj sort");
+        QSort(_drawMergers.Data(), _drawMergers.Size(), CmpShapeObj);
+    }
     // first of all draw non-alpha objects
 
 #if DRAW_OBJS
     {
+        SCOPED_PERF_TIMER(Graphics, "land:obj opaque draw");
         // Instanced runs (perf effort 08): _drawMergers is shape-sorted, so
         // identical static shapes arrive contiguously. A batchable run draws
         // the head once inside Begin/EndInstancedRun — every TL section then
@@ -1707,6 +1718,7 @@ void Scene::DrawObjectsAndShadowsPass2()
         // Scene.cpp under the file-size limit).
         if (GEngine->ShadowMapsEnabled())
         {
+            SCOPED_PERF_TIMER(Graphics, "land:shadow shadow-map depth");
             // Sun shadows fade out at dusk and vanish at night (no sun above the
             // horizon = no sun shadow), as the projected path and OFP/ArmA/FP do.
             // NightEffect is 0 in daylight, ramps through twilight, 1 at night. The
@@ -1727,6 +1739,7 @@ void Scene::DrawObjectsAndShadowsPass2()
         // this to avoid two overlapping shadows.
         if (!GEngine->ShadowMapsEnabled())
         {
+            SCOPED_PERF_TIMER(Graphics, "land:shadow projected draw");
             // Frozen-pose caster accounting for the projected-shadow cache: Object::PrepareShadow
             // bumps gShadowFrozenRouted each time a settled corpse / stopped vehicle is served from
             // the cache instead of re-projected.  Reset per pass, then publish the count the

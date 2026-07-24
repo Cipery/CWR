@@ -13,6 +13,7 @@ using Poseidon::CmpStartStr;
 #include <Poseidon/Core/Global.hpp>
 #include <Poseidon/Graphics/Textures/LooseTextures.hpp>
 #include <Poseidon/Graphics/Textures/PAADecoder.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 #include <vector>
 #include <cstring>
 
@@ -433,6 +434,7 @@ int SurfaceInfoGL33::CalculateSize(const TextureDescGL33& desc, PacFormat format
 
 int SurfaceInfoGL33::CreateSurface(const TextureDescGL33& desc, PacFormat format, int totalSize)
 {
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 texture storage create", 1.0);
     _w = desc.w;
     _h = desc.h;
     _nMipmaps = desc.nMipmaps;
@@ -515,6 +517,7 @@ bool TextureGL33::InitFromRGBA(int w, int h, const void* rgba, uint32_t size, bo
     if (!rgba)
         return false;
 
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 RGBA texture upload", 1.0);
     _initialized = true;
     _dynamicMipmapped = mipmap;
 
@@ -587,6 +590,7 @@ void TextureGL33::UpdateRGBA(const void* rgba, uint32_t size)
     if (!_surface.GetTexture() || !rgba)
         return;
 
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 RGBA texture update", 1.0);
     GL33Bind::Tex2D(EngineGL33::kUploadUnit - GL_TEXTURE0, _surface.GetTexture());
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);

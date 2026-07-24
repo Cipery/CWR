@@ -37,6 +37,7 @@ extern void SDLGamepad_PlayRamp(float beg, float end, float dur);
 #include <Poseidon/Dev/Debug/DebugCheats.hpp>
 #include <Poseidon/Dev/Debug/DebugTrap.hpp>
 #include <Poseidon/Dev/Diag/FrameProfiler.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 
 #include <Poseidon/Dev/Diag/DiagModes.hpp>
 #include <chrono>
@@ -1379,6 +1380,7 @@ void World::Simulate(float deltaT, bool& enableDraw)
             if (!_showMap && IsDisplayEnabled())
             {
                 {
+                    SCOPED_PERF_TIMER(Graphics, "land:obj collect visible");
                     LandBegEnd objBegEnd;
                     Landscape::CalculBoundingRect(objBegEnd, *_scene.GetCamera(), _scene.GetFogMaxRange(), ObjGrid);
 
@@ -1455,6 +1457,7 @@ void World::Simulate(float deltaT, bool& enableDraw)
                                 {
                                     continue;
                                 }
+                                SCOPED_PERF_TIMER_THRESHOLD(Graphics, "land:obj prepare object", 2.0);
                                 ClipFlags clip = orClip;
 #if RECT_CLIPPERS
                                 if (obj->Static())

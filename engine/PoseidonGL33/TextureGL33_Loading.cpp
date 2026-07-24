@@ -9,6 +9,7 @@
 #include <glad/gl.h>
 
 #include <Poseidon/Graphics/Core/MipmapLayout.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 
 extern int MipmapSizeGL33(PacFormat format, int w, int h);
 extern void InitGLPixelFormat(TextureDescGL33& desc, PacFormat format, bool enableDXT);
@@ -75,6 +76,7 @@ int TextureGL33::UploadToGPU(SurfaceInfoGL33& surface, int levelMin)
     if (!tex)
         return -1;
 
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "GL33 streamed texture upload", 1.0);
     // Upload via the dedicated upload unit so cached unit-0/1 bindings
     // tracked by ApplyPassState/_lastHandle remain accurate (otherwise a
     // demand-load between two draws of the same texture leaves GL bound to

@@ -56,10 +56,9 @@ inline int64_t PointToUs(Point p)
 class ScopedTimer
 {
   public:
-    // `thresholdMs == 0` always logs; positive values gate noise from
-    // sub-millisecond paths the user doesn't want to see.  When the
-    // Chrome-trace sink is enabled, every scope emits one trace event
-    // regardless of threshold — the threshold only gates the LOG line.
+    // `thresholdMs == 0` always emits; positive values gate noise from
+    // sub-millisecond paths the user doesn't want to see in both logs
+    // and Chrome traces.
     explicit ScopedTimer(Foundation::LogCategory category, const char* label, double thresholdMs = 0.0)
         : _category(category), _label(label), _thresholdMs(thresholdMs), _start(Now())
     {
@@ -74,7 +73,7 @@ class ScopedTimer
             LogDetail::Get(_category)->log(spdlog::source_loc{}, spdlog::level::debug, "PERF: {} took {:.2f}ms", _label,
                                            ms);
         }
-        if (Trace::IsEnabled())
+        if (ms >= _thresholdMs && Trace::IsEnabled())
         {
             Trace::PushComplete(Foundation::LogCategoryTag(_category), _label, PointToUs(_start),
                                 PointToUs(end) - PointToUs(_start));

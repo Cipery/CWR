@@ -11,6 +11,7 @@
 #include <Poseidon/Foundation/Framework/AppFrame.hpp>
 #include <Poseidon/Foundation/Framework/DebugLog.hpp>
 #include <Poseidon/Foundation/Framework/Log.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 #include <Poseidon/Foundation/Math/Math3D.hpp>
 #include <Poseidon/Foundation/Math/Math3DP.hpp>
 #include <Poseidon/Foundation/Memory/FastAlloc.hpp>
@@ -726,6 +727,7 @@ bool GReplaceProxies = true;
 
 void LODShape::Load(QIStream& f, bool reversed)
 {
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "LODShape::Load", 1.0);
     DoClear();
 
 #if VERBOSE

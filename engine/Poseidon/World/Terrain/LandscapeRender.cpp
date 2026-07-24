@@ -1,6 +1,7 @@
 
 #include <Poseidon/Core/Application.hpp>
 #include <Poseidon/Dev/Diag/FrameProfiler.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 #include <Poseidon/Core/Config/EngineConfig.hpp>
 #include <Poseidon/Graphics/Rendering/Lighting/Lights.hpp>
 #include <Poseidon/World/Scene/Camera/Camera.hpp>
@@ -1537,7 +1538,10 @@ void Landscape::DrawRect(Scene& scene, const LandBegEnd& bigRect)
     Dev::GFrameProfiler().Mark(Dev::FrameProfiler::PhaseDrawLandGround);
     GEngine->EnableReorderQueues(true);
     // draw non-alpha objects
-    scene.DrawObjectsAndShadowsPass1();
+    {
+        SCOPED_PERF_TIMER(Graphics, "land:obj Pass1 total");
+        scene.DrawObjectsAndShadowsPass1();
+    }
     Dev::GFrameProfiler().Mark(Dev::FrameProfiler::PhaseDrawLandObjects);
 
 #if LANDDRAW

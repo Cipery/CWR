@@ -8,6 +8,7 @@
 #include <Poseidon/Foundation/Framework/AppFrame.hpp>
 #include <Poseidon/Foundation/Framework/DebugLog.hpp>
 #include <Poseidon/Foundation/Framework/Log.hpp>
+#include <Poseidon/Dev/Diag/ScopedTimer.hpp>
 #include <Poseidon/Foundation/Math/Math3D.hpp>
 #include <Poseidon/Foundation/Math/Math3DP.hpp>
 #include <Poseidon/Foundation/Memory/FastAlloc.hpp>
@@ -297,6 +298,7 @@ struct OxygenLEOriginTag
 float Shape::LoadTagged(QIStream& f, bool reversed, int ver, bool geometryOnly, AutoArray<float>& massArray,
                         bool tagged)
 {
+    SCOPED_PERF_TIMER_THRESHOLD(Graphics, "Shape::LoadTagged", 1.0);
     _loadWarning = false;
     _face.Clear();
 
