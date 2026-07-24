@@ -137,6 +137,20 @@ struct UploadMip
     Metal::CopyLayout layout;
     std::vector<std::uint8_t> bytes;
 };
+
+std::size_t TightMipChainBytes(Metal::CopyFormat format, int width, int height, bool mipmapped)
+{
+    std::size_t bytes = 0;
+    for (;;)
+    {
+        const Metal::CopyLayout layout = Metal::CopyLayout::Compute(format, width, height, 1);
+        bytes += layout.bytesPerImage;
+        if (!mipmapped || (width == 1 && height == 1))
+            return bytes;
+        width = std::max(width >> 1, 1);
+        height = std::max(height >> 1, 1);
+    }
+}
 } // namespace
 
 PacFormat UploadFormatForTextureMetal(PacFormat format, bool interpolate)
@@ -208,6 +222,7 @@ bool EngineMetal::UploadTexture(TextureMetal& texture, int levelMin)
     std::vector<UploadMip> mips;
     mips.reserve(mipCount);
     std::size_t stagingSize = 0;
+    std::size_t textureBytes = 0;
     for (int sourceLevel = levelMin; sourceLevel < texture._nMipmaps; ++sourceLevel)
     {
         PacLevelMem& sourceMip = texture._mipmaps[sourceLevel];
@@ -237,11 +252,21 @@ bool EngineMetal::UploadTexture(TextureMetal& texture, int levelMin)
         upload.width = sourceMip._w;
         upload.height = sourceMip._h;
         upload.layout = Metal::CopyLayout::Compute(CopyFormatFor(format), upload.width, upload.height);
+        textureBytes += upload.layout.tightBytesPerRow * upload.layout.rowCount;
         stagingSize = Metal::CopyLayout::AlignUp(stagingSize, 256);
         upload.offset = stagingSize;
         stagingSize += upload.layout.bytesPerImage;
         ConvertToTight(format, sourceBytes.Data(), mip._pitch, upload.width, upload.height, upload.bytes);
         mips.push_back(std::move(upload));
+    }
+
+    const std::size_t incrementalBytes =
+        textureBytes > texture._allocatedBytes ? textureBytes - texture._allocatedBytes : 0;
+    if (!texture._bank->ReserveMemory(incrementalBytes, &texture))
+    {
+        LOG_WARN(Graphics, "Metal: texture budget cannot reserve {} KB for {}", (incrementalBytes + 1023) / 1024,
+                 static_cast<const char*>(texture.GetName()));
+        return false;
     }
 
     MTL::TextureDescriptor* descriptor = MTL::TextureDescriptor::texture2DDescriptor(
@@ -258,6 +283,8 @@ bool EngineMetal::UploadTexture(TextureMetal& texture, int levelMin)
         descriptor->setSwizzle(MTL::TextureSwizzleChannels::Make(MTL::TextureSwizzleRed, MTL::TextureSwizzleRed,
                                                                  MTL::TextureSwizzleRed, MTL::TextureSwizzleGreen));
     MTL::Texture* surface = _metal.device->newTexture(descriptor);
+    if (!surface && texture._bank->ForcedReserveMemory(textureBytes, &texture))
+        surface = _metal.device->newTexture(descriptor);
     MTL::Buffer* staging = _metal.device->newBuffer(stagingSize, MTL::ResourceStorageModeShared);
     if (!surface || !staging)
     {
@@ -309,6 +336,7 @@ bool EngineMetal::UploadTexture(TextureMetal& texture, int levelMin)
     texture._residentLevel = levelMin;
     if (oldSurface)
         oldSurface->release();
+    texture._bank->OnResident(texture, textureBytes, levelMin, true);
     return texture._handle != 0;
 }
 
@@ -319,8 +347,17 @@ bool EngineMetal::UploadDynamicTexture(TextureMetal& texture, int width, int hei
     if (!rgba || size < required)
         return false;
 
+    const Metal::CopyLayout layout = Metal::CopyLayout::Compute(Metal::CopyFormat::RGBA8, width, height);
+    const std::size_t textureBytes = TightMipChainBytes(Metal::CopyFormat::RGBA8, width, height, mipmap);
+    const std::size_t incrementalBytes =
+        textureBytes > texture._allocatedBytes ? textureBytes - texture._allocatedBytes : 0;
+    if (!texture._bank->ReserveMemory(incrementalBytes, &texture))
+        return false;
+
     MTL::Texture* surface = texture._surface;
-    if (!surface || static_cast<int>(surface->width()) != width || static_cast<int>(surface->height()) != height)
+    const bool allocateSurface =
+        !surface || static_cast<int>(surface->width()) != width || static_cast<int>(surface->height()) != height;
+    if (allocateSurface)
     {
         MTL::TextureDescriptor* descriptor =
             MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatRGBA8Unorm, width, height, mipmap);
@@ -332,6 +369,8 @@ bool EngineMetal::UploadDynamicTexture(TextureMetal& texture, int width, int hei
         descriptor->setStorageMode(MTL::StorageModePrivate);
         descriptor->setUsage(MTL::TextureUsageShaderRead);
         surface = _metal.device->newTexture(descriptor);
+        if (!surface && texture._bank->ForcedReserveMemory(textureBytes, &texture))
+            surface = _metal.device->newTexture(descriptor);
         if (!surface)
         {
             RecordDiagnostic("failed to create a dynamic texture surface");
@@ -339,7 +378,6 @@ bool EngineMetal::UploadDynamicTexture(TextureMetal& texture, int width, int hei
         }
     }
 
-    const Metal::CopyLayout layout = Metal::CopyLayout::Compute(Metal::CopyFormat::RGBA8, width, height);
     MTL::Buffer* staging = _metal.device->newBuffer(layout.bytesPerImage, MTL::ResourceStorageModeShared);
     if (!staging)
     {
@@ -391,11 +429,14 @@ bool EngineMetal::UploadDynamicTexture(TextureMetal& texture, int width, int hei
             oldSurface->release();
     }
     texture._residentLevel = 0;
+    texture._bank->OnResident(texture, textureBytes, 0, allocateSurface);
     return texture._handle != 0;
 }
 
 void EngineMetal::ReleaseTexture(TextureMetal& texture)
 {
+    if (texture._bank)
+        texture._bank->OnReleased(texture);
     if (texture._handle)
         _textureRegistry.Release(texture._handle);
     texture._handle = 0;

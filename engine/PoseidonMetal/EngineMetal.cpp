@@ -3,10 +3,13 @@
 #include <PoseidonMetal/EngineMetal.hpp>
 
 #include <Poseidon/Foundation/Logging/Logging.hpp>
+#include <PoseidonMetal/Shaders/PoseidonShaderTypes.h>
 #include <PoseidonMetal/TextureMetal.hpp>
 
 #include <SDL3/SDL_filesystem.h>
 
+#include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -55,8 +58,12 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     : _w(width), _h(height), _pixelSize(bpp), _windowedRestoreW(width), _windowedRestoreH(height), _windowed(windowed),
       _clearColor(std::make_unique<MTL::ClearColor>(0.04, 0.10, 0.22, 1.0))
 {
-    LOG_INFO(Graphics, "Metal: Initializing M1 2D/HUD backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
+    LOG_INFO(Graphics, "Metal: Initializing M2 static-world backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
              _windowed ? "windowed" : "fullscreen");
+    const float white[4] = {1, 1, 1, 1};
+    const float eye[4] = {0.299f, 0.587f, 0.114f, 1.0f};
+    std::memcpy(_psConstants.data() + PoseidonPSSlotConstantColor * 4, white, sizeof(white));
+    std::memcpy(_psConstants.data() + PoseidonPSSlotNightEye * 4, eye, sizeof(eye));
 
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     if (!pool)
@@ -207,6 +214,24 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     _meshBase = 0;
     _currentPrimitiveBase = 0;
     _activeQueue = -1;
+    _in3DPass = false;
+    _worldViewportActive = false;
+    _skipCurrentWorldDraw = false;
+    _currentPipeline = nullptr;
+    _currentPipelineWorld = false;
+    _currentDepthState = nullptr;
+    _captureResolvedThisFrame = false;
+    _materialSetSpec = -1;
+    _materialLightsSignature = 0;
+    _texGenMode = render::TexGenMode::Fixed;
+    _currentViewport = {0, 0, static_cast<double>(_frameColor->width()), static_cast<double>(_frameColor->height())};
+    _currentScissor = {
+        0, 0, static_cast<unsigned>(_frameColor->width()), static_cast<unsigned>(_frameColor->height())};
+    _minGuardX = -4096;
+    _maxGuardX = _w + 4096;
+    _minGuardY = -4096;
+    _maxGuardY = _h + 4096;
+    MarkConstantsDirty();
     _frameNeedsClear = clear;
     _clearDepth = true;
     if (_textBank)
@@ -221,14 +246,21 @@ void EngineMetal::FinishDraw()
     if (!_frameOpen)
         return;
 
+    EndWorldViewport();
+    _in3DPass = false;
     base::FinishDraw();
     base::DrawFinishTexts();
     FlushQueues();
     if (_frameNeedsClear)
         EnsureFrameEncoder();
-    EndFrameEncoder();
+    EndFrameEncoder(true);
     if (_textBank)
         _textBank->FinishFrame();
+    const std::size_t worldDraws =
+        static_cast<std::size_t>(std::count_if(_drawItems.begin(), _drawItems.end(),
+                                              [](const DrawItem& item) { return item.isTLDraw; }));
+    LOG_DEBUG(Graphics, "Metal: recorded draws={} world={} queued={}", _drawItems.size(), worldDraws,
+              _drawItems.size() - worldDraws);
     AttachDiagnostics(_frameCommandBuffer);
     _frameRing.EndSpan(_frameCommandBuffer);
     _frameCommandBuffer = nullptr;
@@ -258,8 +290,14 @@ void EngineMetal::NextFrame()
         MTL::CommandBuffer* commandBuffer = _metal.commandQueue->commandBuffer();
         if (commandBuffer)
         {
-            MTL::RenderPassDescriptor* pass = MTL::RenderPassDescriptor::renderPassDescriptor();
-            if (!pass)
+            MTL::Texture* captureSource = EncodeCaptureResolve(commandBuffer);
+            MTL::RenderPassDescriptor* pass =
+                captureSource ? MTL::RenderPassDescriptor::renderPassDescriptor() : nullptr;
+            if (!captureSource)
+            {
+                RecordDiagnostic("failed to prepare the present capture source");
+            }
+            else if (!pass)
             {
                 RecordDiagnostic("failed to create the present render-pass descriptor");
             }
@@ -279,14 +317,18 @@ void EngineMetal::NextFrame()
                     if (MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true))
                     {
                         encoder->setRenderPipelineState(pipeline);
-                        encoder->setFragmentTexture(_frameColor, 0);
-                        encoder->setFragmentSamplerState(_samplers[0], 0);
+                        encoder->setFragmentTexture(captureSource, 0);
+                        encoder->setFragmentSamplerState(_samplers[3], 0);
+                        const float tint[4] = {1, 1, 1, 1};
+                        encoder->setFragmentBytes(tint, sizeof(tint), 0);
                         encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
                     }
                     encoder->endEncoding();
                     commandBuffer->presentDrawable(drawable);
                     AttachDiagnostics(commandBuffer);
                     commandBuffer->commit();
+                    if (_captureColor)
+                        _captureResolvedThisFrame = true;
                 }
                 else
                 {
@@ -309,10 +351,24 @@ void EngineMetal::NextFrame()
 
 void EngineMetal::Clear(bool clearZ, bool clear, PackedColor color)
 {
-    if (_frameOpen && (_frameEncoder || !_triQueues.empty()))
+    if (_frameOpen)
     {
-        FlushQueues();
-        EndFrameEncoder();
+        const bool hasQueuedTriangles = std::any_of(_triQueues.begin(), _triQueues.end(),
+                                                    [](const TriQueue& queue) { return !queue.indices.empty(); });
+        if (hasQueuedTriangles)
+            FlushQueues();
+    }
+    if (_frameOpen && _frameEncoder && clearZ && !clear)
+    {
+        DrawClear(true, false, *_clearColor);
+        return;
+    }
+    if (_frameOpen && _frameEncoder && clear)
+    {
+        const MTL::ClearColor drawColor = MTL::ClearColor::Make(
+            ((color >> 16) & 0xFF) / 255.0, ((color >> 8) & 0xFF) / 255.0, (color & 0xFF) / 255.0, 1.0);
+        DrawClear(clearZ, true, drawColor);
+        return;
     }
     if (clear)
     {
@@ -433,6 +489,10 @@ void EngineMetal::ResetForRemount()
 {
     FlushQueues();
     _drawItems.clear();
+    _currentPipeline = nullptr;
+    _currentPipelineWorld = false;
+    _currentDepthState = nullptr;
+    MarkConstantsDirty();
     if (_textBank)
         _textBank->ReleaseAllTextures();
 }

@@ -96,6 +96,61 @@ bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
     return success;
 }
 
+MTL::Texture* EngineMetal::EncodeCaptureResolve(MTL::CommandBuffer* commandBuffer)
+{
+    if (!_frameColor)
+        return nullptr;
+    if (static_cast<int>(_frameColor->width()) == _w && static_cast<int>(_frameColor->height()) == _h)
+        return _frameColor;
+    if (!_captureColor || static_cast<int>(_captureColor->width()) != _w ||
+        static_cast<int>(_captureColor->height()) != _h)
+    {
+        RecordDiagnostic("non-unit render scale has no window-sized capture target");
+        return nullptr;
+    }
+    if (_captureResolvedThisFrame && !_frameOpen)
+        return _captureColor;
+    if (!commandBuffer)
+        return nullptr;
+
+    MTL::RenderPassDescriptor* pass = MTL::RenderPassDescriptor::renderPassDescriptor();
+    if (!pass)
+    {
+        RecordDiagnostic("failed to create the capture-resolve render-pass descriptor");
+        return nullptr;
+    }
+    MTL::RenderPassColorAttachmentDescriptor* color = pass->colorAttachments()->object(0);
+    color->setTexture(_captureColor);
+    color->setLoadAction(MTL::LoadActionDontCare);
+    color->setStoreAction(MTL::StoreActionStore);
+
+    MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(pass);
+    if (!encoder)
+    {
+        RecordDiagnostic("failed to create the capture-resolve render encoder");
+        return nullptr;
+    }
+    const Metal::PipelineKey key = Metal::PipelineKey::Make(
+        Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, 0xf,
+        Metal::VertexLayout::None, Metal::AttachmentConfig::PresentPass, 0, false);
+    MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true);
+    if (!pipeline)
+    {
+        encoder->endEncoding();
+        return nullptr;
+    }
+    encoder->setRenderPipelineState(pipeline);
+    encoder->setViewport(MTL::Viewport{0, 0, static_cast<double>(_w), static_cast<double>(_h), 0, 1});
+    encoder->setScissorRect(MTL::ScissorRect{0, 0, static_cast<NS::UInteger>(_w), static_cast<NS::UInteger>(_h)});
+    encoder->setFragmentTexture(_frameColor, 0);
+    encoder->setFragmentSamplerState(_samplers[3], 0);
+    const float tint[4] = {1, 1, 1, 1};
+    encoder->setFragmentBytes(tint, sizeof(tint), 0);
+    encoder->drawPrimitives(MTL::PrimitiveTypeTriangle, NS::UInteger(0), NS::UInteger(3));
+    encoder->endEncoding();
+    return _captureColor;
+}
+
 bool EngineMetal::ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& height)
 {
     if (!_frameColor || !_metal.commandQueue)
@@ -119,6 +174,13 @@ bool EngineMetal::ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& 
         staging->release();
         return false;
     }
+    MTL::Texture* captureSource = EncodeCaptureResolve(commandBuffer);
+    if (!captureSource)
+    {
+        RecordDiagnostic("failed to prepare the full-frame capture source");
+        staging->release();
+        return false;
+    }
     MTL::BlitCommandEncoder* blit = commandBuffer->blitCommandEncoder();
     if (!blit)
     {
@@ -126,14 +188,16 @@ bool EngineMetal::ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& 
         staging->release();
         return false;
     }
-    blit->copyFromTexture(_frameColor, 0, 0, MTL::Origin::Make(0, 0, 0), MTL::Size::Make(width, height, 1), staging, 0,
-                          layout.bytesPerRow, layout.bytesPerImage);
+    blit->copyFromTexture(captureSource, 0, 0, MTL::Origin::Make(0, 0, 0), MTL::Size::Make(width, height, 1), staging,
+                          0, layout.bytesPerRow, layout.bytesPerImage);
     blit->endEncoding();
     if (!SubmitSynchronousReadback(commandBuffer))
     {
         staging->release();
         return false;
     }
+    if (_captureColor && !_frameOpen)
+        _captureResolvedThisFrame = true;
 
     bgra.resize(static_cast<std::size_t>(width) * height * 4);
     const std::uint8_t* source = static_cast<const std::uint8_t*>(staging->contents());
@@ -163,6 +227,13 @@ bool EngineMetal::ReadCapturePixel(int x, int y, std::uint8_t rgba[4])
         staging->release();
         return false;
     }
+    MTL::Texture* captureSource = EncodeCaptureResolve(commandBuffer);
+    if (!captureSource)
+    {
+        RecordDiagnostic("failed to prepare the pixel capture source");
+        staging->release();
+        return false;
+    }
     MTL::BlitCommandEncoder* blit = commandBuffer->blitCommandEncoder();
     if (!blit)
     {
@@ -170,12 +241,14 @@ bool EngineMetal::ReadCapturePixel(int x, int y, std::uint8_t rgba[4])
         staging->release();
         return false;
     }
-    blit->copyFromTexture(_frameColor, 0, 0, MTL::Origin::Make(x, y, 0), MTL::Size::Make(1, 1, 1), staging, 0,
+    blit->copyFromTexture(captureSource, 0, 0, MTL::Origin::Make(x, y, 0), MTL::Size::Make(1, 1, 1), staging, 0,
                           layout.bytesPerRow, layout.bytesPerImage);
     blit->endEncoding();
     const bool success = SubmitSynchronousReadback(commandBuffer);
     if (success)
     {
+        if (_captureColor && !_frameOpen)
+            _captureResolvedThisFrame = true;
         const std::uint8_t* bgra = static_cast<const std::uint8_t*>(staging->contents());
         DecodeBGRA8(bgra, rgba, true);
     }

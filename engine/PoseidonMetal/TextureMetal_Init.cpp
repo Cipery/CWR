@@ -123,6 +123,8 @@ void TextureMetal::DoLoadHeaders()
     }
     _nMipmaps = i;
     _residentLevel = _nMipmaps;
+    _levelNeededThisFrame = _nMipmaps;
+    _levelNeededLastFrame = _nMipmaps;
 }
 
 void TextureMetal::LoadHeaders()

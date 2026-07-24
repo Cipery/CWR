@@ -852,6 +852,9 @@ management:
 - `BeginDebugGroup`/`EndDebugGroup` map to `pushDebugGroup`/`popDebugGroup` on the
   current encoder (shows pass structure in Xcode GPU captures — replaces the RenderDoc
   story, which has no macOS capture).
+- **M5 debt:** the `EncoderBroker` abstraction remains deferred but OWED;
+  per-`{array,layer}` `TargetId` handling and cross-target sticky-state replay are
+  cascade requirements, not optional cleanup.
 
 ### 6.5 Offscreen frame target, composition & readbacks
 

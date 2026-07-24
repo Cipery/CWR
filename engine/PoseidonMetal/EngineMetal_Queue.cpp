@@ -211,6 +211,12 @@ void EngineMetal::FlushQueueBatch()
 
 void EngineMetal::PrepareTriangle(const MipInfo& mip, int spec)
 {
+    if (_in3DPass)
+    {
+        EndWorldViewport();
+        _in3DPass = false;
+        _activePassId = static_cast<int>(PassId::ScreenSpace);
+    }
     TextureMetal* texture = static_cast<TextureMetal*>(mip._texture);
     QueueFor(texture, mip._level, spec);
 }
@@ -229,7 +235,15 @@ void EngineMetal::DrawSection(const FaceArray& face, Offset begin, Offset end)
     }
 }
 
-void EngineMetal::PrepareMesh(const render::LegacySpec&) {}
+void EngineMetal::PrepareMesh(const render::LegacySpec&)
+{
+    if (_in3DPass)
+    {
+        EndWorldViewport();
+        _in3DPass = false;
+        _activePassId = static_cast<int>(PassId::ScreenSpace);
+    }
+}
 
 void EngineMetal::BeginMesh(TLVertexTable& mesh, const render::LegacySpec&)
 {
@@ -265,20 +279,21 @@ void EngineMetal::EmitDraw(const render::frame::Draw& draw)
     if (!mesh || !encoder)
         return;
 
-    if (!ApplyScreenState(draw.descriptor, draw.descriptor.shader == render::ShaderFamily::Flat
-                                               ? Metal::FragmentStage::Flat
-                                               : Metal::FragmentStage::Normal))
+    if ((!_currentPipelineWorld || !_currentPipeline || _currentDescriptor != draw.descriptor) &&
+        !ApplyWorldState(draw.descriptor))
         return;
-    encoder->setVertexBuffer(mesh->vertices, mesh->vertexOffset, 30);
-    MTL::Texture* texture = _textureRegistry.Resolve(draw.textures[0].id);
-    encoder->setFragmentTexture(texture ? texture : _fallbackWhite[0], 0);
+    if (!SnapshotConstants() || !BindWorldMatrix(draw.world))
+        return;
+    encoder->setVertexBuffer(mesh->vertices, mesh->vertexOffset, 29);
+    MTL::Texture* texture0 = _textureRegistry.Resolve(draw.textures[0].id);
+    MTL::Texture* texture1 = _textureRegistry.Resolve(draw.textures[1].id);
+    encoder->setFragmentTexture(texture0 ? texture0 : _fallbackWhite[0], 0);
+    encoder->setFragmentTexture(texture1 ? texture1 : _fallbackWhite[1], 1);
     encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, draw.indexCount, MTL::IndexTypeUInt16, mesh->indices,
-                                   mesh->indexOffset + draw.indexBegin * sizeof(std::uint16_t));
+                                   mesh->indexOffset + draw.indexBegin * sizeof(std::uint16_t), 1);
     ++Poseidon::gPerfDrawCalls;
 
-    DrawItem item = {};
-    item.specFlags = {};
-    item.passId = PassId::ScreenSpace;
+    DrawItem item = _currentDrawItem;
     item.firstIndex = draw.indexBegin;
     item.indexCount = draw.indexCount;
     item.backendMeshHandle = draw.mesh.vao;

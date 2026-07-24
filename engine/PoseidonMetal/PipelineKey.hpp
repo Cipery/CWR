@@ -45,6 +45,7 @@ enum class DepthMode : std::uint8_t
     Disabled,
     Shadow,
     ClearDepthStencil,
+    ColorOnlyClear,
     Count
 };
 

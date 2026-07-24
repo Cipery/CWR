@@ -237,17 +237,24 @@ void EngineMetal::OnWindowResized(int w, int h)
 
 void EngineMetal::ApplyPendingResize()
 {
-    if (_pendingPixelW <= 0 || _pendingPixelH <= 0)
+    const bool resize = _pendingPixelW > 0 && _pendingPixelH > 0;
+    const bool scaleChange = _pendingRenderScale != _renderScale;
+    if (!resize && !scaleChange)
         return;
 
-    _w = _pendingPixelW;
-    _h = _pendingPixelH;
-    _pendingPixelW = 0;
-    _pendingPixelH = 0;
-    _metal.layer->setDrawableSize(CGSizeMake(_w, _h));
+    if (resize)
+    {
+        _w = _pendingPixelW;
+        _h = _pendingPixelH;
+        _pendingPixelW = 0;
+        _pendingPixelH = 0;
+        _metal.layer->setDrawableSize(CGSizeMake(_w, _h));
+    }
+    _renderScale = _pendingRenderScale;
     RebuildFrameTargets();
-    FireResizePostHook(_w, _h);
-    LOG_DEBUG(Graphics, "Metal: drawable resized to {}x{}", _w, _h);
+    if (resize)
+        FireResizePostHook(_w, _h);
+    LOG_DEBUG(Graphics, "Metal: frame target rebuilt for {}x{} at render scale {:.2f}", _w, _h, _renderScale);
 }
 
 void EngineMetal::OnFullscreenChanged(bool windowed)

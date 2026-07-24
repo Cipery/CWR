@@ -4,7 +4,9 @@
 #include <Poseidon/Graphics/Textures/TextureBank.hpp>
 #include <PoseidonMetal/MetalFwd.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <list>
 
 namespace Poseidon
 {
@@ -61,6 +63,14 @@ class TextureMetal final : public Texture
     int _nMipmaps = 0;
     int _residentLevel = MAX_MIPMAPS;
     int _largestUsed = MAX_MIPMAPS;
+    int _levelNeededThisFrame = MAX_MIPMAPS;
+    int _levelNeededLastFrame = MAX_MIPMAPS;
+    std::size_t _allocatedBytes = 0;
+    std::uint64_t _lastUseSerial = 0;
+    std::uint64_t _lastUseFrame = 0;
+    bool _wholeUse = false;
+    std::list<TextureMetal*>::iterator _lruIt;
+    bool _inLru = false;
     PacLevelMem _mipmaps[MAX_MIPMAPS];
     MTL::Texture* _surface = nullptr; // Owned.
     std::uint32_t _handle = 0;
@@ -74,6 +84,7 @@ class TextureMetal final : public Texture
 class TextBankMetal final : public AbstractTextBank
 {
     friend class TextureMetal;
+    friend class EngineMetal;
 
   public:
     explicit TextBankMetal(EngineMetal* engine);
@@ -92,15 +103,45 @@ class TextBankMetal final : public AbstractTextBank
     void FlushBank(QFBank* bank) override;
     Texture* CreateDynamic(int w, int h, const void* rgba, std::uint32_t size, bool mipmap = false) override;
     void UpdateDynamic(Texture* texture, const void* rgba, std::uint32_t size) override;
+    void StartFrame() override;
+    void FinishFrame() override;
+    void BoostLoadBudget(int frames) override;
+
+    TextureMetal* GetDetailTexture() const { return _detail; }
+    TextureMetal* GetGrassTexture() const { return _grass; }
+    TextureMetal* GetSpecularTexture() const { return _specular; }
+    TextureMetal* GetWaterBumpMap() const { return _waterBump; }
 
     EngineMetal* Engine() const { return _engine; }
+    void OnResident(TextureMetal& texture, std::size_t bytes, int level, bool allocated);
+    void OnReleased(TextureMetal& texture);
 
   private:
     int Find(RStringB name, TextureMetal* interpolate = nullptr) const;
     int FindFree() const;
     TextureMetal* Copy(int from);
+    void InitDetailTextures();
+    void CheckTextureMemory();
+    bool ReserveMemory(std::size_t bytes, TextureMetal* protectedTexture = nullptr);
+    bool ForcedReserveMemory(std::size_t bytes, TextureMetal* protectedTexture = nullptr);
+    void Touch(TextureMetal& texture);
+    std::size_t TextureBudget() const;
 
     EngineMetal* _engine = nullptr;
     LLinkArray<TextureMetal> _textures;
+    Ref<TextureMetal> _detail;
+    Ref<TextureMetal> _specular;
+    Ref<TextureMetal> _grass;
+    Ref<TextureMetal> _waterBump;
+    std::list<TextureMetal*> _lru;
+    std::size_t _totalAllocated = 0;
+    std::size_t _maxTextureMemory = 0;
+    std::size_t _limitAllocatedTextures = 0;
+    std::size_t _maxSmallTexturePixels = 16;
+    std::uint64_t _useSerial = 0;
+    std::uint64_t _frameSerial = 0;
+    int _thisFrameAllocations = 0;
+    int _loadBoostFrames = 0;
+    Foundation::MemoryDomainProbe _memProbe;
 };
 } // namespace Poseidon
