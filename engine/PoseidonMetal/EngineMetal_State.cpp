@@ -633,10 +633,10 @@ Metal::FragmentStage EngineMetal::FragmentStageFor(const render::RenderPassDescr
 
 bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor)
 {
-    // Shadow and flat world stages are intentionally outside M2. Keep frame
-    // replay from turning that milestone boundary into a missing-function
-    // Metal validation error.
-    if (descriptor.shader == render::ShaderFamily::Shadow || descriptor.shader == render::ShaderFamily::Flat)
+    // M4 owns alpha/additive blends and M5 owns projected shadows. Silently
+    // decline those world draws while retaining opaque/cutout/water paths.
+    if (descriptor.blend != render::BlendMode::Opaque || descriptor.shader == render::ShaderFamily::Shadow ||
+        descriptor.shader == render::ShaderFamily::Flat)
         return false;
     MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder();
     if (!encoder)

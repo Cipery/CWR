@@ -9,6 +9,7 @@
 #include <Poseidon/World/Scene/Camera/Camera.hpp>
 #include <Poseidon/World/Scene/Scene.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -17,6 +18,10 @@ namespace Poseidon
 namespace
 {
 constexpr int kMaxLocalLights = 8;
+constexpr int kMaxWorldInstances = 256;
+static_assert(sizeof(GfxMatrix) == 64, "WorldInstances matrices must remain 64 bytes");
+static_assert(kMaxWorldInstances == std::tuple_size_v<decltype(EngineMetal::_instArray)>,
+              "upload clamp must match the run-accumulation array capacity");
 
 std::uint64_t LightsSignature(const LightList& lights)
 {
@@ -93,30 +98,81 @@ bool EngineMetal::SnapshotConstants()
     return true;
 }
 
-bool EngineMetal::BindWorldMatrix(const GfxMatrix& world)
+bool EngineMetal::UploadWorldInstances(const GfxMatrix* matrices, int count)
 {
-    FrameRing::Allocation allocation = _frameRing.Allocate(sizeof(GfxMatrix));
+    if (!matrices || count <= 0)
+        return true;
+    count = std::min(count, kMaxWorldInstances);
+
+    MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder();
+    if (!encoder)
+        return false;
+
+    const std::size_t bytes = static_cast<std::size_t>(count) * sizeof(GfxMatrix);
+    FrameRing::Allocation allocation = _frameRing.Allocate(bytes);
     if (!allocation)
         return false;
-    std::memcpy(allocation.contents, &world, sizeof(GfxMatrix));
+    std::memcpy(allocation.contents, matrices, bytes);
     _boundWorldBuffer = allocation.buffer;
     _boundWorldOffset = allocation.offset;
-    if (MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder())
+    _runWorldBuffer = allocation.buffer;
+    _runWorldOffset = allocation.offset;
+
+    if (_encoderWorldBuffer == _boundWorldBuffer)
     {
-        if (_encoderWorldBuffer == _boundWorldBuffer)
-        {
-            if (_encoderWorldOffset != _boundWorldOffset)
-                encoder->setVertexBufferOffset(_boundWorldOffset, 2);
-        }
-        else
-        {
-            encoder->setVertexBuffer(_boundWorldBuffer, _boundWorldOffset, 2);
-            _encoderWorldBuffer = _boundWorldBuffer;
-        }
-        _encoderWorldOffset = _boundWorldOffset;
-        return true;
+        if (_encoderWorldOffset != _boundWorldOffset)
+            encoder->setVertexBufferOffset(_boundWorldOffset, 2);
     }
-    return false;
+    else
+    {
+        encoder->setVertexBuffer(_boundWorldBuffer, _boundWorldOffset, 2);
+        _encoderWorldBuffer = _boundWorldBuffer;
+    }
+    _encoderWorldOffset = _boundWorldOffset;
+    return true;
+}
+
+bool EngineMetal::BindWorldSlot(const GfxMatrix& world)
+{
+    MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder();
+    if (!encoder)
+        return false;
+
+    if (_instCount > 1)
+    {
+        // UploadWorldInstances owns buffer(2) for the complete run. Every
+        // section draw must preserve the exact pair so instance_id > 0 never
+        // indexes beyond a scalar 64-byte allocation.
+        PoseidonAssert(_runWorldBuffer != nullptr);
+        PoseidonAssert(_boundWorldBuffer == _runWorldBuffer);
+        PoseidonAssert(_boundWorldOffset == _runWorldOffset);
+        if (!_runWorldBuffer || _boundWorldBuffer != _runWorldBuffer || _boundWorldOffset != _runWorldOffset)
+            return false;
+    }
+    else
+    {
+        FrameRing::Allocation allocation = _frameRing.Allocate(sizeof(GfxMatrix));
+        if (!allocation)
+            return false;
+        std::memcpy(allocation.contents, &world, sizeof(GfxMatrix));
+        _boundWorldBuffer = allocation.buffer;
+        _boundWorldOffset = allocation.offset;
+    }
+
+    if (_encoderWorldBuffer == _boundWorldBuffer)
+    {
+        if (_encoderWorldOffset != _boundWorldOffset)
+            encoder->setVertexBufferOffset(_boundWorldOffset, 2);
+    }
+    else
+    {
+        encoder->setVertexBuffer(_boundWorldBuffer, _boundWorldOffset, 2);
+        _encoderWorldBuffer = _boundWorldBuffer;
+    }
+    _encoderWorldOffset = _boundWorldOffset;
+    PoseidonAssert(_instCount <= 1 || _encoderWorldBuffer == _runWorldBuffer);
+    PoseidonAssert(_instCount <= 1 || _encoderWorldOffset == _runWorldOffset);
+    return true;
 }
 
 void EngineMetal::UploadPSConstant(int slot, const float data[4])

@@ -15,6 +15,51 @@
 
 namespace Poseidon
 {
+void EngineMetal::BeginInstancedRun(int count)
+{
+    PoseidonAssert(count >= 0 && count <= static_cast<int>(_instArray.size()));
+    _instCount = count;
+    _instImpure = false;
+}
+
+bool EngineMetal::EndInstancedRun()
+{
+    const bool pure = !_instImpure;
+    _instCount = 0;
+    _runWorldBuffer = nullptr;
+    _runWorldOffset = 0;
+    return pure;
+}
+
+bool EngineMetal::InstancedRunAdd(const Matrix4& modelToWorld)
+{
+    if (_instPending >= static_cast<int>(_instArray.size()))
+        return false;
+    GfxMatrix& matrix = _instArray[static_cast<std::size_t>(_instPending)];
+    ConvertMatrix(matrix, modelToWorld);
+    matrix._41 -= _frameState.cameraPos[0];
+    matrix._42 -= _frameState.cameraPos[1];
+    matrix._43 -= _frameState.cameraPos[2];
+    ++_instPending;
+    return true;
+}
+
+void EngineMetal::BeginInstancedRunUpload()
+{
+    _runWorldBuffer = nullptr;
+    _runWorldOffset = 0;
+    const bool uploaded = UploadWorldInstances(_instArray.data(), _instPending);
+    BeginInstancedRun(_instPending);
+    if (!uploaded && _instPending > 0)
+    {
+        // Draw the head through the scalar path and make EndInstancedRun ask
+        // the caller to redraw the remaining instances scalar.
+        _instCount = 0;
+        _instImpure = true;
+        RecordDiagnostic("failed to upload an instanced-run WorldInstances block");
+    }
+}
+
 void EngineMetal::PrepareMeshTL(const LightList&, const Matrix4& modelToWorld, const render::LegacySpec& spec)
 {
     FlushQueues();
@@ -94,7 +139,8 @@ void EngineMetal::PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec
     if (secondary)
         _currentDrawItem.backendTexture1Handle = secondary->GetHandle();
 
-    _skipCurrentWorldDraw = descriptor.shader == render::ShaderFamily::Shadow ||
+    _skipCurrentWorldDraw = descriptor.blend != render::BlendMode::Opaque ||
+                            descriptor.shader == render::ShaderFamily::Shadow ||
                             descriptor.shader == render::ShaderFamily::Flat || !ApplyWorldState(descriptor);
 }
 

@@ -54,6 +54,8 @@ class EngineMetal final : public Engine
     void EnableNightEye(float night) override;
     void SetGrassParams(float a1, float a2, float a3 = 0, float a4 = 0) override;
     bool CanGrass() const override { return true; }
+    void SetAlphaToCoverage(bool) override {}
+    bool GetAlphaToCoverage() const override { return false; }
 
     bool SwitchRes(int w, int h, int bpp) override;
     bool SwitchRefreshRate(int refresh) override;
@@ -110,6 +112,8 @@ class EngineMetal final : public Engine
     void EndMesh(TLVertexTable&) override;
     void EnableReorderQueues(bool enable) override;
     void FlushQueues() override;
+    void BeginShadowPass() override;
+    void EndShadowPass() override;
     void EmitDraw(const render::frame::Draw& d) override;
     VertexBuffer* CreateVertexBuffer(const Shape& src, VBType type) override;
     int CompareBuffers(const Shape&, const Shape&) override { return 0; }
@@ -118,6 +122,10 @@ class EngineMetal final : public Engine
     void SetMaterial(const TLMaterial&, const LightList&, const render::LegacySpec&) override;
     void EnableSunLight(bool enable) override;
     void UpdateProjection() override;
+    void InstancedRunReset() override { _instPending = 0; }
+    bool InstancedRunAdd(const Matrix4& modelToWorld) override;
+    void BeginInstancedRunUpload() override;
+    bool EndInstancedRun() override;
     void PrepareMeshTL(const LightList&, const Matrix4&, const render::LegacySpec&) override;
     void BeginMeshTL(const Shape&, int, bool dynamic = false) override;
     void EndMeshTL(const Shape&) override;
@@ -218,7 +226,10 @@ class EngineMetal final : public Engine
     void DrawClear(bool clearDepthStencil, bool clearColor, const MTL::ClearColor& color);
     void MarkConstantsDirty();
     bool SnapshotConstants();
-    bool BindWorldMatrix(const GfxMatrix& world);
+    bool BindWorldSlot(const GfxMatrix& world);
+    bool UploadWorldInstances(const GfxMatrix* matrices, int count);
+    void BeginInstancedRun(int count);
+    int InstancedRunPending() const { return _instPending; }
     void UploadFrameConstants(const FrameState& frame);
     void UploadProjection(const GfxMatrix& projection);
     void UploadMaterialConstants(const TLMaterial& material);
@@ -316,6 +327,11 @@ class EngineMetal final : public Engine
     int _materialSetSpec = -1;
     int _activePassId = static_cast<int>(PassId::ScreenSpace);
     int _instCount = 0;
+    bool _instImpure = false;
+    int _instPending = 0;
+    std::array<GfxMatrix, 256> _instArray = {};
+    MTL::Buffer* _runWorldBuffer = nullptr;
+    std::size_t _runWorldOffset = 0;
     RString _pendingScreenshotPath;
 
     int _w = 0;

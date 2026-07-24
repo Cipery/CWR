@@ -58,7 +58,7 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     : _w(width), _h(height), _pixelSize(bpp), _windowedRestoreW(width), _windowedRestoreH(height), _windowed(windowed),
       _clearColor(std::make_unique<MTL::ClearColor>(0.04, 0.10, 0.22, 1.0))
 {
-    LOG_INFO(Graphics, "Metal: Initializing M2 static-world backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
+    LOG_INFO(Graphics, "Metal: Initializing M3 opaque/instanced backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
              _windowed ? "windowed" : "fullscreen");
     const float white[4] = {1, 1, 1, 1};
     const float eye[4] = {0.299f, 0.587f, 0.114f, 1.0f};
@@ -217,6 +217,11 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     _in3DPass = false;
     _worldViewportActive = false;
     _skipCurrentWorldDraw = false;
+    _instCount = 0;
+    _instImpure = false;
+    _instPending = 0;
+    _runWorldBuffer = nullptr;
+    _runWorldOffset = 0;
     _currentPipeline = nullptr;
     _currentPipelineWorld = false;
     _currentDepthState = nullptr;
@@ -489,6 +494,11 @@ void EngineMetal::ResetForRemount()
 {
     FlushQueues();
     _drawItems.clear();
+    _instCount = 0;
+    _instImpure = false;
+    _instPending = 0;
+    _runWorldBuffer = nullptr;
+    _runWorldOffset = 0;
     _currentPipeline = nullptr;
     _currentPipelineWorld = false;
     _currentDepthState = nullptr;

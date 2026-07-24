@@ -95,6 +95,8 @@ void EngineMetal::QueueFan(const VertexIndex* indices, int count)
     const int indexCount = render::geom::FanTriangleIndexCount(count);
     if (indexCount <= 0)
         return;
+    if (_instCount > 1)
+        _instImpure = true;
     TriQueue& queue = _triQueues[_activeQueue];
     const std::size_t begin = queue.indices.size();
     queue.indices.resize(begin + indexCount);
@@ -105,6 +107,8 @@ void EngineMetal::Queue2DPoly(int count)
 {
     if (_activeQueue < 0 || count < 3)
         return;
+    if (_instCount > 1)
+        _instImpure = true;
     TriQueue& queue = _triQueues[_activeQueue];
     for (int i = 2; i < count; ++i)
     {
@@ -153,6 +157,10 @@ void EngineMetal::FlushQueueBatch()
         context.isIn3DPass = false;
         const render::LegacySpec spec = render::SplitLegacy(queue.special);
         const render::RenderPassDescriptor descriptor = render::BuildRenderPassDescriptor(spec, context);
+        const bool deferredWorldBlend =
+            descriptor.blend != render::BlendMode::Opaque && descriptor.depth != render::DepthMode::Disabled;
+        if (descriptor.shader == render::ShaderFamily::Shadow || deferredWorldBlend)
+            return;
         if (!ApplyScreenState(descriptor, Metal::FragmentStage::Normal))
             return;
         encoder->setVertexBuffer(vertices.buffer, vertices.offset, 30);
@@ -270,6 +278,19 @@ void EngineMetal::FlushQueues()
     FlushQueueBatch();
 }
 
+void EngineMetal::BeginShadowPass()
+{
+    // M5 owns projected-shadow rendering. The live GL33 brackets are
+    // flush-only, so retaining that ordering while shadow draws themselves
+    // no-op is the safe pre-M5 behavior.
+    FlushQueues();
+}
+
+void EngineMetal::EndShadowPass()
+{
+    FlushQueues();
+}
+
 void EngineMetal::EmitDraw(const render::frame::Draw& draw)
 {
     if (draw.mesh.vao == 0 || draw.indexCount <= 0)
@@ -282,15 +303,16 @@ void EngineMetal::EmitDraw(const render::frame::Draw& draw)
     if ((!_currentPipelineWorld || !_currentPipeline || _currentDescriptor != draw.descriptor) &&
         !ApplyWorldState(draw.descriptor))
         return;
-    if (!SnapshotConstants() || !BindWorldMatrix(draw.world))
+    if (!SnapshotConstants() || !BindWorldSlot(draw.world))
         return;
     encoder->setVertexBuffer(mesh->vertices, mesh->vertexOffset, 29);
     MTL::Texture* texture0 = _textureRegistry.Resolve(draw.textures[0].id);
     MTL::Texture* texture1 = _textureRegistry.Resolve(draw.textures[1].id);
     encoder->setFragmentTexture(texture0 ? texture0 : _fallbackWhite[0], 0);
     encoder->setFragmentTexture(texture1 ? texture1 : _fallbackWhite[1], 1);
+    const NS::UInteger instanceCount = static_cast<NS::UInteger>(_instCount > 1 ? _instCount : 1);
     encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, draw.indexCount, MTL::IndexTypeUInt16, mesh->indices,
-                                   mesh->indexOffset + draw.indexBegin * sizeof(std::uint16_t), 1);
+                                   mesh->indexOffset + draw.indexBegin * sizeof(std::uint16_t), instanceCount);
     ++Poseidon::gPerfDrawCalls;
 
     DrawItem item = _currentDrawItem;
