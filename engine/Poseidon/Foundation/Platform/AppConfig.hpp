@@ -359,7 +359,9 @@ private:
     bool _noSplash = false;
     bool _noBanner = false;
     bool _noMenuScene = false;
-    std::string _renderBackend = "gl33";
+    // "auto" resolves to the highest-priority available backend (Metal on
+    // macOS since the M6 gate; GL33 elsewhere / via --render gl33).
+    std::string _renderBackend = "auto";
     bool _enablePIII = false;
     bool _enableHWTL = false;
     bool _disableHWTL = false;

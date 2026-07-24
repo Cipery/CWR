@@ -326,7 +326,7 @@ void AppConfig::ParseCommandLine(int argc, char** argv)
 
         showOption(
             displayGroup->add_option("--render", _renderBackend,
-                                     "Graphics backend: dummy, gl33, metal (macOS), auto (default: gl33)")
+                                     "Graphics backend: dummy, gl33, metal (macOS), auto (default: auto)")
                 ->check(CLI::IsMember({"dummy", "gl33", "metal", "auto"})),
             CliHelpVisibility::Full);
 
