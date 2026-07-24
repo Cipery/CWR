@@ -144,6 +144,18 @@ inline bool TryLoadModule()
         return false;
     }
 #else
+#ifdef __APPLE__
+    ModuleHandle() = dlopen("@executable_path/libopenal.1.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (ModuleHandle() == nullptr)
+        ModuleHandle() = dlopen("libopenal.1.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (ModuleHandle() == nullptr)
+        ModuleHandle() = dlopen("libopenal.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (ModuleHandle() == nullptr)
+    {
+        SetError("libopenal.1.dylib is not available");
+        return false;
+    }
+#else
     ModuleHandle() = dlopen("libopenal.so.1", RTLD_NOW | RTLD_LOCAL);
     if (ModuleHandle() == nullptr)
         ModuleHandle() = dlopen("libopenal.so", RTLD_NOW | RTLD_LOCAL);
@@ -152,6 +164,7 @@ inline bool TryLoadModule()
         SetError("libopenal.so is not available");
         return false;
     }
+#endif
 #endif
     return true;
 }

@@ -47,7 +47,7 @@ function(dist_copy TARGET)
         endif()
     endif()
 
-    # Copy runtime DLLs (e.g., OpenAL32.dll — LGPL dynamic linkage)
+    # Copy the OpenAL runtime (e.g., OpenAL32.dll / libopenal.1.dylib — LGPL dynamic linkage)
     set(_copy_openal_runtime OFF)
     get_target_property(_link_libraries ${TARGET} LINK_LIBRARIES)
     if(_link_libraries)
@@ -84,6 +84,12 @@ function(dist_copy TARGET)
         unset(_openal_bin_dir)
         unset(_openal_triplet_dir)
         unset(_openal_copyright)
+    elseif(APPLE AND TARGET OpenAL::OpenAL AND _copy_openal_runtime)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:OpenAL::OpenAL> "${DIST_DIR}/libopenal.1.dylib"
+            VERBATIM
+        )
     endif()
     unset(_copy_openal_runtime)
     unset(_link_libraries)

@@ -5,8 +5,8 @@
 // Sibling to AudioConfig — same Defaults / Normalize(env) / Load / Save
 // pattern.  Restart-required settings (those that need to recreate the
 // swapchain or move the window between monitors): monitor index,
-// window mode, resolution, refresh rate.  Live-apply quality knobs
-// land in graphics.cfg later, separately.
+// window mode, resolution, refresh rate, native pixel density.  Live-
+// apply quality knobs land in graphics.cfg later, separately.
 //
 // Persistence semantics differ from AudioConfig in one place: Display
 // changes only flow to disk when the user explicitly hits Apply on
@@ -26,6 +26,8 @@
 //                            means both treated as native)
 //   refreshRate = 0      → system default; only meaningful in Fullscreen
 //                            (in Borderless / Windowed the OS owns the rate)
+//   nativePixelDensity   → false on macOS to avoid Retina's 4x pixel cost;
+//                            true elsewhere to preserve Wayland behavior
 
 #include <Poseidon/UI/Settings/AspectRatio.hpp>
 
@@ -56,6 +58,11 @@ public:
 	int                         refreshRate      = 0;                // 0 → system default
 	AspectRatio::DisplayStyle   displayStyle     = AspectRatio::Modern;
 	AspectRatio::UltrawideClamp ultrawideClamp   = AspectRatio::Clamp21x9;
+#ifdef __APPLE__
+	bool nativePixelDensity = false;
+#else
+	bool nativePixelDensity = true;
+#endif
 
 	// Reset every field to factory defaults.
 	void LoadDefaults();

@@ -137,6 +137,8 @@ bool DisplayConfig::Load(const std::string& path)
         resolutionHeight = (int)*e;
     if (auto* e = cfg.FindEntry("refreshRate"))
         refreshRate = (int)*e;
+    if (auto* e = cfg.FindEntry("nativePixelDensity"))
+        nativePixelDensity = (bool)*e;
 
     bool hasDisplayStyle = false;
     if (auto* e = cfg.FindEntry("displayStyle"))
@@ -183,6 +185,7 @@ bool DisplayConfig::Save(const std::string& path) const
     cfg.Add("resolutionWidth", resolutionWidth);
     cfg.Add("resolutionHeight", resolutionHeight);
     cfg.Add("refreshRate", refreshRate);
+    cfg.Add("nativePixelDensity", nativePixelDensity);
     cfg.Add("displayStyle", static_cast<int>(displayStyle));
     cfg.Add("ultrawideClamp", static_cast<int>(ultrawideClamp));
 

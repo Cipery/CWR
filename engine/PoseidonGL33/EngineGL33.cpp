@@ -335,14 +335,12 @@ EngineGL33::EngineGL33(int width, int height, bool windowed, int bpp)
     // as a regular borderless window.
     //
     // Windowed mode keeps the standard resizable bordered window.
-    // SDL_WINDOW_HIGH_PIXEL_DENSITY: opt into native-pixel rendering on
-    // HighDPI displays (Retina, Windows 200% scaling).  Without this
-    // flag SDL renders at *logical* pixels and blits up — content looks
-    // blurry.  The SDL_GetWindowSizeInPixels readback below already
-    // handles the size correctly; this flag makes the readback
-    // actually return higher-than-logical numbers when the display has
-    // a pixel density > 1.
-    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // Native-pixel rendering is opt-in on macOS because a Retina backing
+    // buffer quadruples the rendered pixel count.  It remains the default
+    // elsewhere (notably Wayland, where SDL uses the same opt-in model).
+    Uint32 flags = SDL_WINDOW_OPENGL;
+    if (engineCfg.nativePixelDensity)
+        flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
     switch (placement.mode)
     {
         case WindowMode::Fullscreen:

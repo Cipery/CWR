@@ -125,6 +125,11 @@ void ConfigurationSystem::LoadDefaults()
     SetValue("display.windowed", "false", "default");
     SetValue("display.bpp", "32", "default");
     SetValue("display.refresh", "60", "default");
+#ifdef __APPLE__
+    SetValue("display.native_pixel_density", "false", "default");
+#else
+    SetValue("display.native_pixel_density", "true", "default");
+#endif
 
     SetValue("graphics.lod", "1.0", "default");
     SetValue("graphics.shadows_lod", "0.025", "default");
@@ -160,6 +165,11 @@ void ConfigurationSystem::ApplyCommandLine(const AppConfig& cliArgs)
     {
         ec.displayMode = cliArgs.GetDisplayMode();
         SetValue("display.mode", cliArgs.GetDisplayMode(), "CLI");
+    }
+    if (cliArgs.IsNativePixelDensityExplicit())
+    {
+        ec.nativePixelDensity = cliArgs.NativePixelDensity();
+        SetValue("display.native_pixel_density", cliArgs.NativePixelDensity() ? "true" : "false", "CLI");
     }
 
     // Derive useWindow from displayMode

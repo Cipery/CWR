@@ -71,6 +71,11 @@ TEST_CASE("DisplayConfig: factory defaults match spec", "[Settings][DisplayConfi
     CHECK(c.refreshRate == 0);
     CHECK(c.displayStyle == AspectRatio::Modern);
     CHECK(c.ultrawideClamp == AspectRatio::Clamp21x9);
+#ifdef __APPLE__
+    CHECK_FALSE(c.nativePixelDensity);
+#else
+    CHECK(c.nativePixelDensity);
+#endif
 }
 
 TEST_CASE("DisplayConfig: a fresh instance starts at defaults", "[Settings][DisplayConfig]")
@@ -87,6 +92,7 @@ TEST_CASE("DisplayConfig: a fresh instance starts at defaults", "[Settings][Disp
     CHECK(c.refreshRate == defaulted.refreshRate);
     CHECK(c.displayStyle == defaulted.displayStyle);
     CHECK(c.ultrawideClamp == defaulted.ultrawideClamp);
+    CHECK(c.nativePixelDensity == defaulted.nativePixelDensity);
 }
 
 TEST_CASE("DisplayConfig: Save then Load round-trips every field", "[Settings][DisplayConfig]")
@@ -102,6 +108,11 @@ TEST_CASE("DisplayConfig: Save then Load round-trips every field", "[Settings][D
     src.refreshRate = 144;
     src.displayStyle = AspectRatio::Legacy;
     src.ultrawideClamp = AspectRatio::Clamp16x9;
+#ifdef __APPLE__
+    src.nativePixelDensity = true;
+#else
+    src.nativePixelDensity = false;
+#endif
     REQUIRE(src.Save(path));
 
     DisplayConfig dst;
@@ -113,6 +124,7 @@ TEST_CASE("DisplayConfig: Save then Load round-trips every field", "[Settings][D
     CHECK(dst.refreshRate == src.refreshRate);
     CHECK(dst.displayStyle == src.displayStyle);
     CHECK(dst.ultrawideClamp == src.ultrawideClamp);
+    CHECK(dst.nativePixelDensity == src.nativePixelDensity);
 }
 
 TEST_CASE("DisplayConfig: Load on missing file returns false, leaves instance untouched", "[Settings][DisplayConfig]")

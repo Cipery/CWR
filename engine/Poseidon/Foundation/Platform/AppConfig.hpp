@@ -52,6 +52,11 @@ public:
     
     /// Check if height was explicitly set on command line
     bool IsHeightExplicit() const { return _heightExplicit; }
+
+    bool NativePixelDensity() const { return _nativePixelDensity; }
+
+    /// Check if --native-pixel-density was explicitly provided on the CLI
+    bool IsNativePixelDensityExplicit() const { return _nativePixelDensityExplicit; }
     
     bool NoSplash() const { return _noSplash; }
 
@@ -349,6 +354,8 @@ private:
     int _windowHeight = 600;
     bool _widthExplicit = false;
     bool _heightExplicit = false;
+    bool _nativePixelDensity = false;
+    bool _nativePixelDensityExplicit = false;
     bool _noSplash = false;
     bool _noBanner = false;
     bool _noMenuScene = false;

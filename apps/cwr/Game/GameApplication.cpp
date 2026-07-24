@@ -298,7 +298,27 @@ DisplayStartupOverrides GetCliDisplayOverrides(const AppConfig& cli)
         request.resolutionWidth = cli.GetWindowWidth();
     if (cli.IsHeightExplicit())
         request.resolutionHeight = cli.GetWindowHeight();
+    if (cli.IsNativePixelDensityExplicit())
+        request.nativePixelDensity = cli.NativePixelDensity();
     return BuildDisplayStartupOverrides(request);
+}
+
+// SDL's pixel-density flag is fixed at window creation, so transfer this
+// startup-only display.cfg setting into EngineConfig before GEngine exists.
+// An explicit CLI flag has higher priority than the persisted value.
+void LoadDisplayPixelDensityConfig()
+{
+    DisplayConfig cfg;
+    const std::string path = DisplayConfigPath();
+    if (!cfg.Load(path))
+    {
+        cfg.LoadDefaults();
+        cfg.Save(path);
+        LOG_INFO(Graphics, "LoadDisplayConfig: created defaults at '{}'", path);
+    }
+
+    ApplyDisplayStartupOverrides(cfg, GetCliDisplayOverrides(AppConfig::Instance()));
+    ENGINE_CONFIG.nativePixelDensity = cfg.nativePixelDensity;
 }
 
 // Eager-write defaults if the file is missing, then apply the cfg
@@ -346,8 +366,9 @@ void LoadAndApplyDisplayConfig()
         GEngine->SwitchRefreshRate(cfg.refreshRate);
     ApplyAspectPolicy(cfg);
 
-    LOG_DEBUG(Graphics, "LoadDisplayConfig: monitor={} mode={} res={}x{} refresh={}", cfg.monitor, (int)cfg.windowMode,
-              cfg.resolutionWidth, cfg.resolutionHeight, cfg.refreshRate);
+    LOG_DEBUG(Graphics, "LoadDisplayConfig: monitor={} mode={} res={}x{} refresh={} nativePixelDensity={}", cfg.monitor,
+              (int)cfg.windowMode, cfg.resolutionWidth, cfg.resolutionHeight, cfg.refreshRate,
+              cfg.nativePixelDensity ? 1 : 0);
 }
 
 // GraphicsConfig::Environment impl — only consults system RAM today.
@@ -619,6 +640,8 @@ int GameApplication::RunAfterArgumentParsing()
 
     if (!ReadConfiguration())
         return 0;
+
+    LoadDisplayPixelDensityConfig();
 
     if (!InitializeGraphicsEngine())
         return 1;

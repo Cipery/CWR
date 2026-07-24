@@ -92,7 +92,8 @@ bool HasPendingChangesImpl(const DisplayConfig& pending, const DisplayConfig& ap
     return pending.monitor != applied.monitor || pending.windowMode != applied.windowMode ||
            pending.resolutionWidth != applied.resolutionWidth || pending.resolutionHeight != applied.resolutionHeight ||
            pending.refreshRate != applied.refreshRate || pending.displayStyle != applied.displayStyle ||
-           pending.ultrawideClamp != applied.ultrawideClamp;
+           pending.ultrawideClamp != applied.ultrawideClamp ||
+           pending.nativePixelDensity != applied.nativePixelDensity;
 }
 
 void ApplyDisplayPolicy(int viewportWidth, int viewportHeight)
@@ -485,6 +486,7 @@ void DisplayPage::CaptureEngineState()
             m_applied.refreshRate = fromFile.refreshRate;
             m_applied.displayStyle = fromFile.displayStyle;
             m_applied.ultrawideClamp = fromFile.ultrawideClamp;
+            m_applied.nativePixelDensity = fromFile.nativePixelDensity;
         }
     }
 

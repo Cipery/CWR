@@ -12,6 +12,7 @@ struct DisplayStartupOverrides
     std::optional<DisplayConfig::WindowMode> windowMode;
     std::optional<int> resolutionWidth;
     std::optional<int> resolutionHeight;
+    std::optional<bool> nativePixelDensity;
 };
 
 struct DisplayStartupOverrideRequest
@@ -20,6 +21,7 @@ struct DisplayStartupOverrideRequest
     std::optional<DisplayConfig::WindowMode> windowMode;
     std::optional<int> resolutionWidth;
     std::optional<int> resolutionHeight;
+    std::optional<bool> nativePixelDensity;
     int defaultWindowWidth = 800;
     int defaultWindowHeight = 600;
 };
@@ -30,6 +32,7 @@ inline DisplayStartupOverrides BuildDisplayStartupOverrides(const DisplayStartup
     overrides.windowMode = request.windowMode;
     overrides.resolutionWidth = request.resolutionWidth;
     overrides.resolutionHeight = request.resolutionHeight;
+    overrides.nativePixelDensity = request.nativePixelDensity;
 
     if (request.windowFlagExplicit)
     {
@@ -61,6 +64,12 @@ inline bool ApplyDisplayStartupOverrides(DisplayConfig& cfg, const DisplayStartu
     if (overrides.resolutionHeight && cfg.resolutionHeight != *overrides.resolutionHeight)
     {
         cfg.resolutionHeight = *overrides.resolutionHeight;
+        changed = true;
+    }
+
+    if (overrides.nativePixelDensity && cfg.nativePixelDensity != *overrides.nativePixelDensity)
+    {
+        cfg.nativePixelDensity = *overrides.nativePixelDensity;
         changed = true;
     }
 

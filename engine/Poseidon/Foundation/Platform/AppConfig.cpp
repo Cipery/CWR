@@ -315,6 +315,10 @@ void AppConfig::ParseCommandLine(int argc, char** argv)
         auto* heightOpt = displayGroup->add_option("--height,-h", _windowHeight, "Window height in pixels")
                               ->check(CLI::Range(240, 4320));
 
+        auto* nativePixelDensityOpt =
+            displayGroup->add_flag("--native-pixel-density", _nativePixelDensity,
+                                   "Render at native display pixel density (default: off on macOS, on elsewhere)");
+
         bool showSplash = true;
         displayGroup->add_flag("--splash,!--no-splash", showSplash, "Show splash screens on startup");
         bool showMenuScene = true;
@@ -740,6 +744,7 @@ void AppConfig::ParseCommandLine(int argc, char** argv)
             _widthExplicit = widthOpt->count() > 0;
             _heightExplicit = heightOpt->count() > 0;
             _displayModeExplicit = displayModeOpt->count() > 0;
+            _nativePixelDensityExplicit = nativePixelDensityOpt->count() > 0;
 
             // --window flag overrides display mode
             if (_windowMode && !_displayModeExplicit)
@@ -993,6 +998,8 @@ void AppConfig::ApplyToLegacyGlobals()
     // Display & Graphics
     ENGINE_CONFIG.useWindow = _windowMode;
     ENGINE_CONFIG.displayMode = _displayMode;
+    if (_nativePixelDensityExplicit)
+        ENGINE_CONFIG.nativePixelDensity = _nativePixelDensity;
     ENGINE_CONFIG.noSplash = _noSplash;
     ENGINE_CONFIG.noMenuScene = _noMenuScene;
 

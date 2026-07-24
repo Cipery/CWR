@@ -59,6 +59,19 @@ TEST_CASE("Display startup overrides are a no-op when CLI did not set display fl
     CHECK(cfg.resolutionHeight == 0);
 }
 
+TEST_CASE("Display startup overrides replace persisted pixel-density policy only when explicit",
+          "[Settings][DisplayConfig][startup]")
+{
+    DisplayConfig cfg;
+    cfg.nativePixelDensity = false;
+
+    DisplayStartupOverrides overrides;
+    overrides.nativePixelDensity = true;
+
+    REQUIRE(ApplyDisplayStartupOverrides(cfg, overrides));
+    CHECK(cfg.nativePixelDensity);
+}
+
 TEST_CASE("Display startup override request gives --window a default 800x600 size",
           "[Settings][DisplayConfig][startup]")
 {

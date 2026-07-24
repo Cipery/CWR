@@ -34,6 +34,11 @@ public:
 	int wantW = 800;
 	int wantH = 600;
 	std::string displayMode = "borderless"; // "windowed" / "borderless" / "exclusive"
+#ifdef __APPLE__
+	bool nativePixelDensity = false;
+#else
+	bool nativePixelDensity = true;
+#endif
 	bool useWindow = false;
 	bool noSplash = false;
 	bool noMenuScene = false;
