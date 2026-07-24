@@ -79,22 +79,24 @@ Compiled binaries need game data (not in repo, APL-SA licensed). We use the user
 
 ## Plan — escalation ladder
 
-### Phase 0 — Build system + headless targets
+### Phase 0 — Build system + headless targets ✅ DONE 2026-07-24
 Goal: `PoseidonServer`, `PoseidonTools`, `PoseidonEvaluator` + Rust crates build & run on macOS arm64.
-- [ ] `cmake/presets/macos.json` (`macos-arm64-clang-{debug,rwdi,release}`), wired into `CMakePresets.json`
-- [ ] `cmake/toolchains/macos-arm64-clang.cmake` (Apple Clang vs Homebrew LLVM — decide; repo pins Clang). Include **`-fsigned-char`** — arm64 defaults `char` to unsigned, x86 targets assume signed
-- [ ] vcpkg `arm64-osx` triplet config in `cmake/vcpkg-triplets/` — incl. per-port `VCPKG_LIBRARY_LINKAGE=dynamic` override for **openal-soft** (mirror `x64-windows-clang.cmake:4-6`; LGPL + the engine `dlopen`s it) — and **verify the pinned deps resolve for arm64-osx**: `sdl3 >= 3.4.10#1`, openal-soft, imgui[sdl3-*] under the pinned `builtin-baseline`; bump baseline if the arm64-osx port lags
-- [ ] `APPLE` branch in top-level `CMakeLists.txt` **plus per-target audit**: replace GNU `--start-group/--end-group` link flags with Darwin equivalents in `apps/cwr/Server/`, `apps/tools/Tools/` (and any sibling target CMake)
-- [ ] **SIMD port (blocker):** sse2neon shim (or scalar fallback) for the complete inventory — `Math3DK.hpp`, `V3QuadsP3.cpp`, `ColorsK.hpp`, `Quatrix.hpp`, `Occlusion.cpp` (`OPTIMIZE_FOR_MMX` hardcode); verify struct sizes/alignment unchanged
-- [ ] **Threads (runtime-broken on macOS despite compiling):** `PoCritical.cpp` recursive-mutex init idiom (`_NP` initializer + struct copy) → `pthread_mutex_init` path; `PoSemaphore.cpp`/`MultiSync.hpp` unnamed semaphores → `dispatch_semaphore_t` backend; smoke-run a threaded tool binary, don't trust the build gate
-- [ ] **CrashHandler `__APPLE__` branch:** minimal Mach/dyld implementation or clean stub of the entire non-Windows path (`<link.h>`/ELF code cannot compile on Darwin)
-- [ ] `PackFiles.cpp`: drop dead `<malloc.h>` include
-- [ ] MemGrow: guard Linux includes; swap-stats via `sysctlbyname("vm.swapusage")`
-- [ ] Platform.cpp process-memory via `task_info(MACH_TASK_BASIC_INFO)`
-- [ ] Test fixtures: `_NSGetExecutablePath` instead of `/proc/self/exe` (`test_fixtures.hpp:37`); platform-specific crash-handler test expectations
-- [ ] Verify whether vcpkg resolves `libmount` on macOS at all; drop from checklist if unreachable
-- [ ] Rust: `cargo build` per crate — `engine/Trident` + each of `mserver/{Archive,CLI,Client,MasterService}`
-- [ ] Game-data convention: stage `packages/Remaster` (symlink to our data), document `-C` launch usage
+
+> **Completed** (commit `eb813ff`+): libPoseidon.a (524 objects), all three headless binaries build & run natively on Apple Silicon. Verified: server boots to "world initialized" against real game data (8-thread TaskPool → WP5 thread backend works at runtime), PBO listing works, SQF evaluator works, all 5 Rust crates build. Extra discovery during bring-up: legacy `finite()` removed from macOS SDK → central `isfinite` shim in `platform.hpp` (24 call sites, 7 files). Caveats: CTest suite not yet exercised (needs the CI-lane work); `libmount` proved a non-issue (vcpkg graph never requests it); XDG→`~/Library` paths deliberately deferred to Phase 3.
+- [x] `cmake/presets/macos.json` (`macos-arm64-clang-{debug,rwdi,release}`), wired into `CMakePresets.json`
+- [x] `cmake/toolchains/macos-arm64-clang.cmake` (Apple Clang vs Homebrew LLVM — decide; repo pins Clang). Include **`-fsigned-char`** — arm64 defaults `char` to unsigned, x86 targets assume signed
+- [x] vcpkg `arm64-osx` triplet config in `cmake/vcpkg-triplets/` — incl. per-port `VCPKG_LIBRARY_LINKAGE=dynamic` override for **openal-soft** (mirror `x64-windows-clang.cmake:4-6`; LGPL + the engine `dlopen`s it) — and **verify the pinned deps resolve for arm64-osx**: `sdl3 >= 3.4.10#1`, openal-soft, imgui[sdl3-*] under the pinned `builtin-baseline`; bump baseline if the arm64-osx port lags
+- [x] `APPLE` branch in top-level `CMakeLists.txt` **plus per-target audit**: replace GNU `--start-group/--end-group` link flags with Darwin equivalents in `apps/cwr/Server/`, `apps/tools/Tools/` (and any sibling target CMake)
+- [x] **SIMD port (blocker):** sse2neon shim (or scalar fallback) for the complete inventory — `Math3DK.hpp`, `V3QuadsP3.cpp`, `ColorsK.hpp`, `Quatrix.hpp`, `Occlusion.cpp` (`OPTIMIZE_FOR_MMX` hardcode); verify struct sizes/alignment unchanged
+- [x] **Threads (runtime-broken on macOS despite compiling):** `PoCritical.cpp` recursive-mutex init idiom (`_NP` initializer + struct copy) → `pthread_mutex_init` path; `PoSemaphore.cpp`/`MultiSync.hpp` unnamed semaphores → `dispatch_semaphore_t` backend; smoke-run a threaded tool binary, don't trust the build gate
+- [x] **CrashHandler `__APPLE__` branch:** minimal Mach/dyld implementation or clean stub of the entire non-Windows path (`<link.h>`/ELF code cannot compile on Darwin)
+- [x] `PackFiles.cpp`: drop dead `<malloc.h>` include
+- [x] MemGrow: guard Linux includes; swap-stats via `sysctlbyname("vm.swapusage")`
+- [x] Platform.cpp process-memory via `task_info(MACH_TASK_BASIC_INFO)`
+- [x] Test fixtures: `_NSGetExecutablePath` instead of `/proc/self/exe` (`test_fixtures.hpp:37`); platform-specific crash-handler test expectations
+- [x] Verify whether vcpkg resolves `libmount` on macOS at all; drop from checklist if unreachable
+- [x] Rust: `cargo build` per crate — `engine/Trident` + each of `mserver/{Archive,CLI,Client,MasterService}`
+- [x] Game-data convention: stage `packages/Remaster` (symlink to our data), document `-C` launch usage
 - Verify: server starts, tools run against PBO files from game data, per-crate Rust builds green
 
 ### Phase 1 — Client compiles & links

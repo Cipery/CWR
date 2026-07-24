@@ -45,7 +45,8 @@
       "binaryDir": "${sourceDir}/build/macos-arm64-clang-rwdi",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "arm64-osx-clang",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/macos-arm64-clang.cmake"
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/macos-arm64-clang.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
     {

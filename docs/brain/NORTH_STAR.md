@@ -20,5 +20,7 @@ locked repository — no PRs accepted there; all work lives on the `Cipery/CWR` 
 - `thirdparty/` is excluded from the project GPL (vendored code, own licenses).
 
 ## Current status (keep fresh)
-Research + planning done (2026-07-24, see `../MACOS_PORT.md`); game data staged locally
-in `packages/`. Next: Phase 0 — macOS build plumbing + headless targets.
+**Phase 0 complete (2026-07-24):** engine core + all headless targets (server/tools/
+evaluator) build and run natively on macOS arm64; server world-inits against real game
+data; Rust crates build. See `../MACOS_PORT.md` Phase 0 banner for caveats.
+Next: Phase 1 — full client compile & link (`PoseidonGame`).
