@@ -83,3 +83,6 @@ target/
 
 # Claude Code session scratch (review prompts etc.)
 .claude/prompts/
+
+# clangd compile database (generated per-machine)
+/compile_commands.json
