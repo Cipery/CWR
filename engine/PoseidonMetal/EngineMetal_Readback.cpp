@@ -57,7 +57,7 @@ bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
                 return false;
             }
         }
-        EndFrameEncoder();
+        EndFrameEncoder(false, _frameResolveColor != nullptr);
         if (!_frameCommandBuffer)
         {
             RecordDiagnostic("mid-frame readback has no active frame command buffer");
@@ -98,10 +98,11 @@ bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
 
 MTL::Texture* EngineMetal::EncodeCaptureResolve(MTL::CommandBuffer* commandBuffer)
 {
-    if (!_frameColor)
+    MTL::Texture* resolvedFrame = ResolvedFrameColor();
+    if (!resolvedFrame)
         return nullptr;
-    if (static_cast<int>(_frameColor->width()) == _w && static_cast<int>(_frameColor->height()) == _h)
-        return _frameColor;
+    if (static_cast<int>(resolvedFrame->width()) == _w && static_cast<int>(resolvedFrame->height()) == _h)
+        return resolvedFrame;
     if (!_captureColor || static_cast<int>(_captureColor->width()) != _w ||
         static_cast<int>(_captureColor->height()) != _h)
     {
@@ -142,7 +143,7 @@ MTL::Texture* EngineMetal::EncodeCaptureResolve(MTL::CommandBuffer* commandBuffe
     encoder->setRenderPipelineState(pipeline);
     encoder->setViewport(MTL::Viewport{0, 0, static_cast<double>(_w), static_cast<double>(_h), 0, 1});
     encoder->setScissorRect(MTL::ScissorRect{0, 0, static_cast<NS::UInteger>(_w), static_cast<NS::UInteger>(_h)});
-    encoder->setFragmentTexture(_frameColor, 0);
+    encoder->setFragmentTexture(resolvedFrame, 0);
     encoder->setFragmentSamplerState(_samplers[3], 0);
     const float tint[4] = {1, 1, 1, 1};
     encoder->setFragmentBytes(tint, sizeof(tint), 0);

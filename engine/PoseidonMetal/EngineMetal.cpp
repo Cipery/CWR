@@ -58,7 +58,7 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     : _w(width), _h(height), _pixelSize(bpp), _windowedRestoreW(width), _windowedRestoreH(height), _windowed(windowed),
       _clearColor(std::make_unique<MTL::ClearColor>(0.04, 0.10, 0.22, 1.0))
 {
-    LOG_INFO(Graphics, "Metal: Initializing M3 opaque/instanced backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
+    LOG_INFO(Graphics, "Metal: Initializing M4 alpha/MSAA backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
              _windowed ? "windowed" : "fullscreen");
     const float white[4] = {1, 1, 1, 1};
     const float eye[4] = {0.299f, 0.587f, 0.114f, 1.0f};

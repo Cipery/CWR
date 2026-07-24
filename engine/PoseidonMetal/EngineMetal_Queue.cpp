@@ -9,20 +9,33 @@
 #include <Poseidon/Foundation/Logging/Logging.hpp>
 
 #include <cstring>
+#include <iterator>
 #include <utility>
 
 namespace Poseidon
 {
+namespace
+{
+constexpr std::size_t kMaxQueuedVertices = 32 * 1024;
+
+int FractionalAlpha(float alpha)
+{
+    int value = toInt(alpha);
+    saturate(value, 0, 255);
+    return value;
+}
+} // namespace
+
 void EngineMetal::QueueVertices(const TLVertex* vertices, int count)
 {
     if (!vertices || count <= 0)
         return;
-    if (count > 32 * 1024)
+    if (static_cast<std::size_t>(count) > kMaxQueuedVertices)
     {
-        LOG_ERROR(Graphics, "Metal: soup upload needs {} vertices, limit is {}", count, 32 * 1024);
+        LOG_ERROR(Graphics, "Metal: soup upload needs {} vertices, limit is {}", count, kMaxQueuedVertices);
         return;
     }
-    if (_queuedVertices.size() + static_cast<std::size_t>(count) > 32 * 1024)
+    if (_queuedVertices.size() + static_cast<std::size_t>(count) > kMaxQueuedVertices)
         FlushQueueBatch();
     _meshBase = static_cast<int>(_queuedVertices.size());
     _queuedVertices.insert(_queuedVertices.end(), vertices, vertices + count);
@@ -157,9 +170,7 @@ void EngineMetal::FlushQueueBatch()
         context.isIn3DPass = false;
         const render::LegacySpec spec = render::SplitLegacy(queue.special);
         const render::RenderPassDescriptor descriptor = render::BuildRenderPassDescriptor(spec, context);
-        const bool deferredWorldBlend =
-            descriptor.blend != render::BlendMode::Opaque && descriptor.depth != render::DepthMode::Disabled;
-        if (descriptor.shader == render::ShaderFamily::Shadow || deferredWorldBlend)
+        if (descriptor.shader == render::ShaderFamily::Shadow)
             return;
         if (!ApplyScreenState(descriptor, Metal::FragmentStage::Normal))
             return;
@@ -229,6 +240,72 @@ void EngineMetal::PrepareTriangle(const MipInfo& mip, int spec)
     QueueFor(texture, mip._level, spec);
 }
 
+void EngineMetal::DrawDecal(Vector3Par screen, float rhw, float sizeX, float sizeY, PackedColor color,
+                            const MipInfo& mip, int spec)
+{
+    if (sizeX <= 0.0f || sizeY <= 0.0f)
+        return;
+
+    float xBegin = screen.X() - sizeX;
+    float xEnd = screen.X() + sizeX;
+    float yBegin = screen.Y() - sizeY;
+    float yEnd = screen.Y() + sizeY;
+    float uBegin = 0.0f;
+    float uEnd = 1.0f;
+    float vBegin = 0.0f;
+    float vEnd = 1.0f;
+
+    if (xBegin < 0.0f)
+    {
+        uBegin = -xBegin / (2.0f * sizeX);
+        xBegin = 0.0f;
+    }
+    if (xEnd > _w)
+    {
+        uEnd = 1.0f - (xEnd - _w) / (2.0f * sizeX);
+        xEnd = static_cast<float>(_w);
+    }
+    if (yBegin < 0.0f)
+    {
+        vBegin = -yBegin / (2.0f * sizeY);
+        yBegin = 0.0f;
+    }
+    if (yEnd > _h)
+    {
+        vEnd = 1.0f - (yEnd - _h) / (2.0f * sizeY);
+        yEnd = static_cast<float>(_h);
+    }
+    if (xBegin >= xEnd || yBegin >= yEnd)
+        return;
+
+    TLVertex vertices[4] = {};
+    vertices[0].pos = Vector3P(xBegin, yBegin, screen.Z());
+    vertices[1].pos = Vector3P(xEnd, yBegin, screen.Z());
+    vertices[2].pos = Vector3P(xEnd, yEnd, screen.Z());
+    vertices[3].pos = Vector3P(xBegin, yEnd, screen.Z());
+    vertices[0].t0 = {uBegin, vBegin};
+    vertices[1].t0 = {uEnd, vBegin};
+    vertices[2].t0 = {uEnd, vEnd};
+    vertices[3].t0 = {uBegin, vEnd};
+
+    const PackedColor vertexColor =
+        (spec & IsAlphaFog) ? color : PackedColor(color | 0xff000000);
+    const PackedColor vertexSpecular =
+        (spec & IsAlphaFog) ? PackedColor(0xff000000)
+                            : PackedColor(0xff000000 - (color & 0xff000000));
+    for (TLVertex& vertex : vertices)
+    {
+        vertex.rhw = rhw;
+        vertex.color = vertexColor;
+        vertex.specular = vertexSpecular;
+    }
+
+    PrepareTriangle(mip, spec);
+    QueueVertices(vertices, 4);
+    static const VertexIndex indices[4] = {0, 1, 2, 3};
+    QueueFan(indices, 4);
+}
+
 void EngineMetal::DrawPolygon(const VertexIndex* indices, int count)
 {
     QueueFan(indices, count);
@@ -240,6 +317,67 @@ void EngineMetal::DrawSection(const FaceArray& face, Offset begin, Offset end)
     {
         const Poly& polygon = face[offset];
         QueueFan(polygon.GetVertexList(), polygon.N());
+    }
+}
+
+void EngineMetal::DrawPoints(int begin, int end)
+{
+    if (!_mesh || _activeQueue < 0)
+        return;
+
+    for (int i = begin; i < end; ++i)
+    {
+        if (_mesh->Clip(i) & ClipAll)
+            continue;
+
+        const TLVertex& point = _mesh->GetVertex(i);
+        const PackedColor color = point.color;
+        if (color.A8() < 8)
+            continue;
+
+        const int x = toIntFloor(point.pos[0]);
+        const int y = toIntFloor(point.pos[1]);
+        const float xFraction = point.pos[0] - x;
+        const float yFraction = point.pos[1] - y;
+        const float inverseX = 1.0f - xFraction;
+        const float inverseY = 1.0f - yFraction;
+        const float alpha = color.A8();
+
+        TLVertex vertices[4] = {};
+        vertices[0] = point;
+        vertices[0].pos[0] = x + 0.5f;
+        vertices[0].pos[1] = y + 0.5f;
+        vertices[0].color = PackedColorRGB(color, FractionalAlpha(inverseX * inverseY * alpha));
+        vertices[0].specular = PackedColor(0xff000000);
+        vertices[1] = vertices[0];
+        vertices[1].pos[0] = x + 2.5f;
+        vertices[1].color = PackedColorRGB(color, FractionalAlpha(xFraction * inverseY * alpha));
+        vertices[2] = vertices[1];
+        vertices[2].pos[1] = y + 2.5f;
+        vertices[2].color = PackedColorRGB(color, FractionalAlpha(xFraction * yFraction * alpha));
+        vertices[3] = vertices[2];
+        vertices[3].pos[0] = vertices[0].pos[0];
+        vertices[3].color = PackedColorRGB(color, FractionalAlpha(inverseX * yFraction * alpha));
+
+        // QueueVertices flushes the 32K soup on overflow, and that flush
+        // deliberately invalidates _activeQueue. Snapshot its identity only
+        // for that path so this point can establish the continuation queue.
+        const bool queueWillOverflow = _queuedVertices.size() + std::size(vertices) > kMaxQueuedVertices;
+        TextureMetal* texture = nullptr;
+        int level = 0;
+        int special = 0;
+        if (queueWillOverflow)
+        {
+            const TriQueue& queue = _triQueues[static_cast<std::size_t>(_activeQueue)];
+            texture = queue.texture;
+            level = queue.level;
+            special = queue.special;
+        }
+        QueueVertices(vertices, 4);
+        if (queueWillOverflow && _activeQueue < 0)
+            QueueFor(texture, level, special);
+        static const VertexIndex indices[4] = {0, 1, 2, 3};
+        QueueFan(indices, 4);
     }
 }
 

@@ -266,11 +266,57 @@ void EngineMetal::DrawLine(int begin, int end)
         return;
     const TLVertex& first = _mesh->GetVertex(begin);
     const TLVertex& last = _mesh->GetVertex(end);
-    Line2DAbs line;
-    line.beg.x = first.pos.X();
-    line.beg.y = first.pos.Y();
-    line.end.x = last.pos.X();
-    line.end.y = last.pos.Y();
-    DrawLine(line, first.color, last.color, Rect2DAbs(0, 0, _w, _h));
+
+    float x0 = first.pos.X();
+    float y0 = first.pos.Y();
+    float x1 = last.pos.X();
+    float y1 = last.pos.Y();
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const float lengthSquared = dx * dx + dy * dy;
+    const float inverseLength = lengthSquared > 0.0f ? InvSqrt(lengthSquared) : 1.0f;
+    const float length = lengthSquared * inverseLength;
+    const float px = dy * inverseLength;
+    const float py = -dx * inverseLength;
+    constexpr float width = 3.0f;
+    x0 -= px * width * 0.5f;
+    x1 -= px * width * 0.5f;
+    y0 -= py * width * 0.5f;
+    y1 -= py * width * 0.5f;
+
+    Vertex2DAbs vertices[4] = {};
+    vertices[0].x = x0;
+    vertices[0].y = y0;
+    vertices[0].z = first.pos.Z();
+    vertices[0].w = first.rhw;
+    vertices[0].u = 0.0f;
+    vertices[0].v = 0.25f;
+    vertices[0].color = first.color;
+    vertices[1].x = x0 + px * width;
+    vertices[1].y = y0 + py * width;
+    vertices[1].z = first.pos.Z();
+    vertices[1].w = first.rhw;
+    vertices[1].u = 0.0f;
+    vertices[1].v = 1.0f;
+    vertices[1].color = first.color;
+    vertices[2].x = x1 + px * width;
+    vertices[2].y = y1 + py * width;
+    vertices[2].z = last.pos.Z();
+    vertices[2].w = last.rhw;
+    vertices[2].u = length;
+    vertices[2].v = 1.0f;
+    vertices[2].color = last.color;
+    vertices[3].x = x1;
+    vertices[3].y = y1;
+    vertices[3].z = last.pos.Z();
+    vertices[3].w = last.rhw;
+    vertices[3].u = length;
+    vertices[3].v = 0.25f;
+    vertices[3].color = last.color;
+
+    Texture* texture = GPreloadedTextures.New(TextureLine);
+    const MipInfo mip = TextBank()->UseMipmap(texture, 1, 1);
+    const int spec = NoZWrite | IsAlpha | ClampU | ClampV | IsAlphaFog;
+    DrawPoly(mip, vertices, 4, Rect2DAbs(0, 0, _w, _h), spec);
 }
 } // namespace Poseidon

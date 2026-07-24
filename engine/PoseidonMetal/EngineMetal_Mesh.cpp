@@ -139,9 +139,8 @@ void EngineMetal::PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec
     if (secondary)
         _currentDrawItem.backendTexture1Handle = secondary->GetHandle();
 
-    _skipCurrentWorldDraw = descriptor.blend != render::BlendMode::Opaque ||
-                            descriptor.shader == render::ShaderFamily::Shadow ||
-                            descriptor.shader == render::ShaderFamily::Flat || !ApplyWorldState(descriptor);
+    _skipCurrentWorldDraw =
+        descriptor.shader == render::ShaderFamily::Shadow || !ApplyWorldState(descriptor);
 }
 
 void EngineMetal::UpdateProjection()

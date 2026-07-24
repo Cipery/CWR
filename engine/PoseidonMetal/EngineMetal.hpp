@@ -38,6 +38,10 @@ class EngineMetal final : public Engine
     using base = Engine;
 
   public:
+    // Instanced-run accumulation capacity — the WorldInstances upload clamp
+    // in EngineMetal_Constants.cpp static_asserts against this value.
+    static constexpr int kInstArrayCapacity = 256;
+
     EngineMetal(int width, int height, bool windowed, int bpp);
     ~EngineMetal() override;
 
@@ -54,8 +58,10 @@ class EngineMetal final : public Engine
     void EnableNightEye(float night) override;
     void SetGrassParams(float a1, float a2, float a3 = 0, float a4 = 0) override;
     bool CanGrass() const override { return true; }
-    void SetAlphaToCoverage(bool) override {}
-    bool GetAlphaToCoverage() const override { return false; }
+    void SetAlphaToCoverage(bool enable) override;
+    bool GetAlphaToCoverage() const override { return _alphaToCoverageCfg && _msaaSamples > 1; }
+    void SetDebugFlatColor(bool enable) override;
+    bool GetDebugFlatColor() const override { return _debugFlatColor; }
 
     bool SwitchRes(int w, int h, int bpp) override;
     bool SwitchRefreshRate(int refresh) override;
@@ -101,12 +107,13 @@ class EngineMetal final : public Engine
     void PrepareTriangleTL(const MipInfo&, const render::LegacySpec&) override;
     void DrawPolygon(const VertexIndex*, int) override;
     void DrawSection(const FaceArray&, Offset, Offset) override;
-    void DrawDecal(Vector3Par, float, float, float, PackedColor, const MipInfo&, int) override {}
+    void DrawDecal(Vector3Par, float, float, float, PackedColor, const MipInfo&, int) override;
     void Draw2D(const Draw2DPars&, const Rect2DAbs&, const Rect2DAbs&) override;
     void DrawPoly(const MipInfo&, const Vertex2DAbs*, int, const Rect2DAbs&, int) override;
     void DrawPoly(const MipInfo&, const Vertex2DPixel*, int, const Rect2DPixel&, int) override;
     void DrawLine(const Line2DAbs&, PackedColor, PackedColor, const Rect2DAbs&) override;
     void DrawLine(int, int) override;
+    void DrawPoints(int beg, int end) override;
     void PrepareMesh(const render::LegacySpec&) override;
     void BeginMesh(TLVertexTable&, const render::LegacySpec&) override;
     void EndMesh(TLVertexTable&) override;
@@ -150,6 +157,8 @@ class EngineMetal final : public Engine
     int MaxSatY() const override { return _maxGuardY; }
     void SetRenderScale(float scale) override;
     float GetRenderScale() const override { return _renderScale; }
+    void SetMsaaSamples(int samples) override;
+    int GetMsaaSamples() const override { return _msaaSamples; }
 
     float ZShadowEpsilon() const override { return 0.01f; }
     float ZRoadEpsilon() const override { return 0.005f; }
@@ -207,6 +216,11 @@ class EngineMetal final : public Engine
     bool InitializeM1Resources();
     void DestroyM1Resources();
     bool RebuildFrameTargets();
+    void RefreshSupportedSampleCounts();
+    int ClampMsaaSampleCount(int samples);
+    unsigned FrameSampleCount() const;
+    std::uint8_t FrameSampleCountLog2() const;
+    MTL::Texture* ResolvedFrameColor() const;
     bool InitializePipelines();
     bool InitializeDepthStates();
     bool InitializeSamplers();
@@ -214,7 +228,7 @@ class EngineMetal final : public Engine
     MTL::RenderPipelineState* ResolvePipeline(Metal::PipelineKey key, bool logMiss);
     MTL::RenderPipelineState* BuildPipeline(Metal::PipelineKey key);
     MTL::RenderCommandEncoder* EnsureFrameEncoder();
-    void EndFrameEncoder(bool terminal = false);
+    void EndFrameEncoder(bool terminal = false, bool resolveForReadback = false);
     bool ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment);
     bool ApplyWorldState(const render::RenderPassDescriptor& descriptor);
     Metal::FragmentStage FragmentStageFor(const render::RenderPassDescriptor& descriptor) const;
@@ -270,6 +284,7 @@ class EngineMetal final : public Engine
     NS::AutoreleasePool* _framePool = nullptr;
 
     MTL::Texture* _frameColor = nullptr;
+    MTL::Texture* _frameResolveColor = nullptr;
     MTL::Texture* _frameDepthStencil = nullptr;
     MTL::Texture* _captureColor = nullptr;
     std::array<MTL::Texture*, 2> _fallbackWhite = {};
@@ -329,7 +344,7 @@ class EngineMetal final : public Engine
     int _instCount = 0;
     bool _instImpure = false;
     int _instPending = 0;
-    std::array<GfxMatrix, 256> _instArray = {};
+    std::array<GfxMatrix, kInstArrayCapacity> _instArray = {};
     MTL::Buffer* _runWorldBuffer = nullptr;
     std::size_t _runWorldOffset = 0;
     RString _pendingScreenshotPath;
@@ -349,6 +364,10 @@ class EngineMetal final : public Engine
     std::array<float, 4> _grassParams = {};
     float _renderScale = 1.0f;
     float _pendingRenderScale = 1.0f;
+    int _msaaSamples = 0;
+    int _pendingMsaaSamples = 0;
+    std::array<bool, 4> _supportedSampleCounts = {true, false, false, false};
+    unsigned _msaaClampLoggedMask = 0;
     int _minGuardX = -4096;
     int _maxGuardX = _w + 4096;
     int _minGuardY = -4096;
@@ -356,6 +375,8 @@ class EngineMetal final : public Engine
     bool _windowed = true;
     bool _frameOpen = false;
     bool _loggedMidFrameReadback = false;
+    bool _alphaToCoverageCfg = true;
+    bool _debugFlatColor = false;
     bool _initialized = false;
     WindowMode _windowMode = WindowMode::Windowed;
     std::unique_ptr<MTL::ClearColor> _clearColor;

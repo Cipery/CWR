@@ -20,7 +20,7 @@ namespace
 constexpr int kMaxLocalLights = 8;
 constexpr int kMaxWorldInstances = 256;
 static_assert(sizeof(GfxMatrix) == 64, "WorldInstances matrices must remain 64 bytes");
-static_assert(kMaxWorldInstances == std::tuple_size_v<decltype(EngineMetal::_instArray)>,
+static_assert(kMaxWorldInstances == EngineMetal::kInstArrayCapacity,
               "upload clamp must match the run-accumulation array capacity");
 
 std::uint64_t LightsSignature(const LightList& lights)

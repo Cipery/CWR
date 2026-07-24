@@ -239,7 +239,8 @@ void EngineMetal::ApplyPendingResize()
 {
     const bool resize = _pendingPixelW > 0 && _pendingPixelH > 0;
     const bool scaleChange = _pendingRenderScale != _renderScale;
-    if (!resize && !scaleChange)
+    const bool sampleChange = _pendingMsaaSamples != _msaaSamples;
+    if (!resize && !scaleChange && !sampleChange)
         return;
 
     if (resize)
@@ -250,11 +251,58 @@ void EngineMetal::ApplyPendingResize()
         _pendingPixelH = 0;
         _metal.layer->setDrawableSize(CGSizeMake(_w, _h));
     }
+    const float previousScale = _renderScale;
+    const int previousSamples = _msaaSamples;
     _renderScale = _pendingRenderScale;
-    RebuildFrameTargets();
+    _msaaSamples = _pendingMsaaSamples;
+    if (sampleChange && !InitializePipelines())
+    {
+        _msaaSamples = previousSamples;
+        _pendingMsaaSamples = previousSamples;
+        RecordDiagnostic("failed to prebuild PSO variants for the requested MSAA sample count");
+    }
+    bool rebuilt = RebuildFrameTargets();
+    if (!rebuilt && (_msaaSamples != previousSamples || _renderScale != previousScale))
+    {
+        _renderScale = previousScale;
+        _pendingRenderScale = previousScale;
+        _msaaSamples = previousSamples;
+        _pendingMsaaSamples = previousSamples;
+        rebuilt = InitializePipelines() && RebuildFrameTargets();
+        RecordDiagnostic("failed to rebuild the requested AA targets; restored the previous render scale and "
+                         "sample count");
+    }
+    if (rebuilt && sampleChange)
+    {
+        // Keep the eager cache bounded to the active FramePass sample count.
+        // PresentPass remains 1x and is retained across target rebuilds.
+        const std::uint32_t currentSampleBits =
+            static_cast<std::uint32_t>(FrameSampleCountLog2()) << 18;
+        for (auto pipeline = _pipelineCache.begin(); pipeline != _pipelineCache.end();)
+        {
+            const bool framePass =
+                ((pipeline->first >> 16) & 0x3u) ==
+                static_cast<std::uint32_t>(Metal::AttachmentConfig::FramePass);
+            const bool currentSamples = (pipeline->first & (0x3u << 18)) == currentSampleBits;
+            if (framePass && !currentSamples)
+            {
+                if (pipeline->second)
+                    pipeline->second->release();
+                pipeline = _pipelineCache.erase(pipeline);
+            }
+            else
+            {
+                ++pipeline;
+            }
+        }
+    }
     if (resize)
         FireResizePostHook(_w, _h);
-    LOG_DEBUG(Graphics, "Metal: frame target rebuilt for {}x{} at render scale {:.2f}", _w, _h, _renderScale);
+    if (rebuilt)
+        LOG_INFO(Graphics, "Metal: frame target rebuilt for {}x{} at render scale {:.2f}, {}x MSAA", _w, _h,
+                 _renderScale, FrameSampleCount());
+    else
+        RecordDiagnostic("failed to rebuild the pending Metal frame target");
 }
 
 void EngineMetal::OnFullscreenChanged(bool windowed)

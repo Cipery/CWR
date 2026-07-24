@@ -123,6 +123,7 @@ bool EngineMetal::InitializeM1Resources()
         RecordDiagnostic("device does not support the BC texture compression required by the Metal backend");
         return false;
     }
+    RefreshSupportedSampleCounts();
     return RebuildFrameTargets() && InitializeDepthStates() && InitializeSamplers() && InitializePipelines() &&
            InitializeFallbackTextures();
 }
@@ -132,11 +133,14 @@ void EngineMetal::DestroyM1Resources()
     EndFrameEncoder();
     if (_frameColor)
         _frameColor->release();
+    if (_frameResolveColor)
+        _frameResolveColor->release();
     if (_frameDepthStencil)
         _frameDepthStencil->release();
     if (_captureColor)
         _captureColor->release();
     _frameColor = nullptr;
+    _frameResolveColor = nullptr;
     _frameDepthStencil = nullptr;
     _captureColor = nullptr;
 
@@ -174,6 +178,7 @@ bool EngineMetal::RebuildFrameTargets()
         return false;
     const int targetWidth = std::max(1, static_cast<int>(_w * _renderScale + 0.5f));
     const int targetHeight = std::max(1, static_cast<int>(_h * _renderScale + 0.5f));
+    const unsigned sampleCount = FrameSampleCount();
 
     MTL::TextureDescriptor* color =
         MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatBGRA8Unorm, targetWidth, targetHeight, false);
@@ -186,12 +191,38 @@ bool EngineMetal::RebuildFrameTargets()
         return false;
     }
     color->setStorageMode(MTL::StorageModePrivate);
-    color->setUsage(static_cast<MTL::TextureUsage>(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead));
+    color->setUsage(sampleCount > 1
+                        ? MTL::TextureUsageRenderTarget
+                        : static_cast<MTL::TextureUsage>(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead));
+    if (sampleCount > 1)
+    {
+        color->setTextureType(MTL::TextureType2DMultisample);
+        color->setSampleCount(sampleCount);
+    }
     MTL::Texture* newColor = _metal.device->newTexture(color);
 
     depth->setStorageMode(MTL::StorageModePrivate);
     depth->setUsage(MTL::TextureUsageRenderTarget);
+    if (sampleCount > 1)
+    {
+        depth->setTextureType(MTL::TextureType2DMultisample);
+        depth->setSampleCount(sampleCount);
+    }
     MTL::Texture* newDepth = _metal.device->newTexture(depth);
+    MTL::Texture* newResolve = nullptr;
+    if (sampleCount > 1)
+    {
+        MTL::TextureDescriptor* resolve =
+            MTL::TextureDescriptor::texture2DDescriptor(
+                MTL::PixelFormatBGRA8Unorm, targetWidth, targetHeight, false);
+        if (resolve)
+        {
+            resolve->setStorageMode(MTL::StorageModePrivate);
+            resolve->setUsage(
+                static_cast<MTL::TextureUsage>(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead));
+            newResolve = _metal.device->newTexture(resolve);
+        }
+    }
     MTL::Texture* newCapture = nullptr;
     if (_renderScale != 1.0f)
     {
@@ -205,32 +236,104 @@ bool EngineMetal::RebuildFrameTargets()
             newCapture = _metal.device->newTexture(capture);
         }
     }
-    if (!newColor || !newDepth || (_renderScale != 1.0f && !newCapture))
+    if (!newColor || !newDepth || (sampleCount > 1 && !newResolve) ||
+        (_renderScale != 1.0f && !newCapture))
     {
         if (newColor)
             newColor->release();
         if (newDepth)
             newDepth->release();
+        if (newResolve)
+            newResolve->release();
         if (newCapture)
             newCapture->release();
         RecordDiagnostic("failed to create " + std::to_string(targetWidth) + "x" + std::to_string(targetHeight) +
-                         " frame targets and window-sized capture target");
+                         " frame targets at " + std::to_string(sampleCount) +
+                         "x MSAA and window-sized capture target");
         return false;
     }
 
     if (_frameColor)
         _frameColor->release();
+    if (_frameResolveColor)
+        _frameResolveColor->release();
     if (_frameDepthStencil)
         _frameDepthStencil->release();
     if (_captureColor)
         _captureColor->release();
     _frameColor = newColor;
+    _frameResolveColor = newResolve;
     _frameDepthStencil = newDepth;
     _captureColor = newCapture;
     _captureResolvedThisFrame = false;
     _frameNeedsClear = true;
     _clearDepth = true;
     return true;
+}
+
+void EngineMetal::RefreshSupportedSampleCounts()
+{
+    if (!_metal.device)
+        return;
+    constexpr unsigned counts[] = {1, 2, 4, 8};
+    for (unsigned i = 0; i < _supportedSampleCounts.size(); ++i)
+        _supportedSampleCounts[i] = _metal.device->supportsTextureSampleCount(counts[i]);
+    LOG_DEBUG(Graphics, "Metal: texture sample counts 1x={} 2x={} 4x={} 8x={}",
+              _supportedSampleCounts[0], _supportedSampleCounts[1], _supportedSampleCounts[2],
+              _supportedSampleCounts[3]);
+}
+
+int EngineMetal::ClampMsaaSampleCount(int samples)
+{
+    const int requested = samples >= 8 ? 8 : samples >= 4 ? 4 : samples >= 2 ? 2 : 0;
+    if (requested == 0)
+        return 0;
+
+    int candidate = requested;
+    while (candidate >= 2)
+    {
+        const unsigned index = candidate == 8 ? 3u : candidate == 4 ? 2u : 1u;
+        if (_supportedSampleCounts[index])
+            break;
+        candidate /= 2;
+    }
+    const int clamped = candidate >= 2 ? candidate : 0;
+    if (clamped != requested)
+    {
+        const unsigned logBit = requested == 8 ? 4u : requested == 4 ? 2u : 1u;
+        if ((_msaaClampLoggedMask & logBit) == 0)
+        {
+            LOG_WARN(Graphics, "Metal: requested {}x MSAA is unsupported; clamped to {}x", requested,
+                     clamped > 1 ? clamped : 1);
+            _msaaClampLoggedMask |= logBit;
+        }
+    }
+    return clamped;
+}
+
+unsigned EngineMetal::FrameSampleCount() const
+{
+    return _msaaSamples > 1 ? static_cast<unsigned>(_msaaSamples) : 1u;
+}
+
+std::uint8_t EngineMetal::FrameSampleCountLog2() const
+{
+    switch (FrameSampleCount())
+    {
+        case 8:
+            return 3;
+        case 4:
+            return 2;
+        case 2:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+MTL::Texture* EngineMetal::ResolvedFrameColor() const
+{
+    return _frameResolveColor ? _frameResolveColor : _frameColor;
 }
 
 bool EngineMetal::InitializeDepthStates()
@@ -314,37 +417,47 @@ bool EngineMetal::InitializeSamplers()
 
 bool EngineMetal::InitializePipelines()
 {
+    const std::uint8_t sampleCountLog2 = FrameSampleCountLog2();
     for (Metal::FragmentStage fragment : {Metal::FragmentStage::Normal, Metal::FragmentStage::Flat})
     {
         for (unsigned blend = 0; blend < static_cast<unsigned>(Metal::PipelineBlend::Count); ++blend)
         {
             const Metal::PipelineKey key = Metal::PipelineKey::Make(
                 Metal::VertexStage::Screen, fragment, static_cast<Metal::PipelineBlend>(blend), 0xf,
-                Metal::VertexLayout::TLVertex, Metal::AttachmentConfig::FramePass, 0, false);
+                Metal::VertexLayout::TLVertex, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
             if (!ResolvePipeline(key, false))
                 return false;
         }
     }
     for (Metal::FragmentStage fragment : {Metal::FragmentStage::Normal, Metal::FragmentStage::Detail,
-                                          Metal::FragmentStage::Grass, Metal::FragmentStage::Water})
+                                          Metal::FragmentStage::Grass, Metal::FragmentStage::Water,
+                                          Metal::FragmentStage::Flat})
     {
         for (unsigned blend = 0; blend < static_cast<unsigned>(Metal::PipelineBlend::Count); ++blend)
         {
             const Metal::PipelineKey key = Metal::PipelineKey::Make(
                 Metal::VertexStage::Transform, fragment, static_cast<Metal::PipelineBlend>(blend), 0xf,
-                Metal::VertexLayout::SVertex, Metal::AttachmentConfig::FramePass, 0, false);
+                Metal::VertexLayout::SVertex, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
             if (!ResolvePipeline(key, false))
+                return false;
+        }
+        if (FrameSampleCount() > 1)
+        {
+            const Metal::PipelineKey a2c = Metal::PipelineKey::Make(
+                Metal::VertexStage::Transform, fragment, Metal::PipelineBlend::Opaque, 0xf,
+                Metal::VertexLayout::SVertex, Metal::AttachmentConfig::FramePass, sampleCountLog2, true);
+            if (!ResolvePipeline(a2c, false))
                 return false;
         }
     }
     const Metal::PipelineKey clear = Metal::PipelineKey::Make(
         Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, 0,
-        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, 0, false);
+        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
     if (!ResolvePipeline(clear, false))
         return false;
     const Metal::PipelineKey blackFill = Metal::PipelineKey::Make(
         Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, 0xf,
-        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, 0, false);
+        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
     if (!ResolvePipeline(blackFill, false))
         return false;
     const Metal::PipelineKey blit = Metal::PipelineKey::Make(
@@ -496,6 +609,8 @@ MTL::RenderCommandEncoder* EngineMetal::EnsureFrameEncoder()
     }
     MTL::RenderPassColorAttachmentDescriptor* color = pass->colorAttachments()->object(0);
     color->setTexture(_frameColor);
+    if (_frameResolveColor)
+        color->setResolveTexture(_frameResolveColor);
     color->setLoadAction(_frameNeedsClear ? MTL::LoadActionClear : MTL::LoadActionLoad);
     color->setStoreAction(MTL::StoreActionUnknown);
     color->setClearColor(*_clearColor);
@@ -536,11 +651,19 @@ MTL::RenderCommandEncoder* EngineMetal::EnsureFrameEncoder()
     return _frameEncoder;
 }
 
-void EngineMetal::EndFrameEncoder(bool terminal)
+void EngineMetal::EndFrameEncoder(bool terminal, bool resolveForReadback)
 {
     if (_frameEncoder)
     {
-        _frameEncoder->setColorStoreAction(MTL::StoreActionStore, 0);
+        MTL::StoreAction colorStoreAction = MTL::StoreActionStore;
+        if (_frameResolveColor)
+        {
+            colorStoreAction = terminal
+                                   ? MTL::StoreActionMultisampleResolve
+                                   : resolveForReadback ? MTL::StoreActionStoreAndMultisampleResolve
+                                                        : MTL::StoreActionStore;
+        }
+        _frameEncoder->setColorStoreAction(colorStoreAction, 0);
         _frameEncoder->setDepthStoreAction(terminal ? MTL::StoreActionDontCare : MTL::StoreActionStore);
         _frameEncoder->setStencilStoreAction(terminal ? MTL::StoreActionDontCare : MTL::StoreActionStore);
         _frameEncoder->endEncoding();
@@ -563,7 +686,7 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     const Metal::PipelineBlend blend = ToPipelineBlend(descriptor.blend);
     const Metal::PipelineKey key =
         Metal::PipelineKey::Make(Metal::VertexStage::Screen, fragment, blend, 0xf, Metal::VertexLayout::TLVertex,
-                                 Metal::AttachmentConfig::FramePass, 0, false);
+                                 Metal::AttachmentConfig::FramePass, FrameSampleCountLog2(), false);
     MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true);
     if (!pipeline)
         return false;
@@ -586,7 +709,7 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     const bool alphaTest =
         descriptor.alpha == render::AlphaMode::Test || descriptor.alpha == render::AlphaMode::TestAndBlend;
     ps.slots[PoseidonPSSlotAlphaRef] = {
-        descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, 0.0f, 0.0f};
+        descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, 0.0f, _debugFlatColor ? 1.0f : 0.0f};
     ps.slots[PoseidonPSSlotConstantColor] = {1.0f, 1.0f, 1.0f, 1.0f};
     ps.slots[PoseidonPSSlotNightEye] = {0.299f, 0.587f, 0.114f, 1.0f};
 
@@ -633,20 +756,23 @@ Metal::FragmentStage EngineMetal::FragmentStageFor(const render::RenderPassDescr
 
 bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor)
 {
-    // M4 owns alpha/additive blends and M5 owns projected shadows. Silently
-    // decline those world draws while retaining opaque/cutout/water paths.
-    if (descriptor.blend != render::BlendMode::Opaque || descriptor.shader == render::ShaderFamily::Shadow ||
-        descriptor.shader == render::ShaderFamily::Flat)
+    // Projected-shadow geometry remains an M5 no-op. Alpha/additive world
+    // sections are emitted immediately in the scene's already-sorted order.
+    if (descriptor.shader == render::ShaderFamily::Shadow)
         return false;
     MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder();
     if (!encoder)
         return false;
     if (_currentPipelineWorld && _currentPipeline && _currentDescriptor == descriptor)
         return true;
+    const bool alphaTest =
+        descriptor.alpha == render::AlphaMode::Test || descriptor.alpha == render::AlphaMode::TestAndBlend;
+    const bool alphaToCoverage = descriptor.alpha == render::AlphaMode::Test &&
+                                 descriptor.blend == render::BlendMode::Opaque && GetAlphaToCoverage();
     const Metal::PipelineKey key =
         Metal::PipelineKey::Make(Metal::VertexStage::Transform, FragmentStageFor(descriptor),
                                  ToPipelineBlend(descriptor.blend), 0xf, Metal::VertexLayout::SVertex,
-                                 Metal::AttachmentConfig::FramePass, 0, false);
+                                 Metal::AttachmentConfig::FramePass, FrameSampleCountLog2(), alphaToCoverage);
     MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true);
     if (!pipeline)
         return false;
@@ -669,10 +795,16 @@ bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor
     const Metal::DepthMode depth = ToDepthMode(descriptor.depth);
     _currentDepthState = _depthStates[static_cast<unsigned>(depth)];
     encoder->setDepthStencilState(_currentDepthState);
+    // Metal orders these as constant bias, slope scale, clamp; GL33's
+    // OnSurface decal offset is units=-1, factor=-1.
+    if (descriptor.surface == render::SurfaceMode::OnSurface)
+        encoder->setDepthBias(-1.0f, -1.0f, 0.0f);
+    else
+        encoder->setDepthBias(0.0f, 0.0f, 0.0f);
 
-    const bool alphaTest =
-        descriptor.alpha == render::AlphaMode::Test || descriptor.alpha == render::AlphaMode::TestAndBlend;
-    const float alpha[4] = {descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, 0.0f, 0.0f};
+    const float alpha[4] = {
+        descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, alphaToCoverage ? 1.0f : 0.0f,
+        _debugFlatColor ? 1.0f : 0.0f};
     UploadPSConstant(PoseidonPSSlotAlphaRef, alpha);
     _frameState.fogParams[2] = descriptor.fog == render::FogMode::Enabled ? 1.0f : 0.0f;
     if (std::memcmp(_vsConstants.data() + PoseidonVSSlotFog * 4, _frameState.fogParams,
@@ -748,7 +880,7 @@ void EngineMetal::FillFrameRectBlack(unsigned x, unsigned y, unsigned width, uns
         return;
     const Metal::PipelineKey key = Metal::PipelineKey::Make(
         Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, 0xf,
-        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, 0, false);
+        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, FrameSampleCountLog2(), false);
     MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true);
     if (!pipeline)
         return;
@@ -804,7 +936,7 @@ void EngineMetal::DrawClear(bool clearDepthStencil, bool clearColor, const MTL::
     const std::uint8_t colorMask = clearColor ? 0xf : 0;
     const Metal::PipelineKey key = Metal::PipelineKey::Make(
         Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, colorMask,
-        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, 0, false);
+        Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, FrameSampleCountLog2(), false);
     MTL::RenderPipelineState* clearPipeline = ResolvePipeline(key, true);
     if (!clearPipeline)
         return;
@@ -858,5 +990,29 @@ bool EngineMetal::GetGLViewport(int outRect[4]) const
 void EngineMetal::SetRenderScale(float scale)
 {
     _pendingRenderScale = std::max(1.0f, std::min(scale, 2.0f));
+}
+
+void EngineMetal::SetMsaaSamples(int samples)
+{
+    RefreshSupportedSampleCounts();
+    _pendingMsaaSamples = ClampMsaaSampleCount(samples);
+}
+
+void EngineMetal::SetAlphaToCoverage(bool enable)
+{
+    if (_alphaToCoverageCfg == enable)
+        return;
+    _alphaToCoverageCfg = enable;
+    _currentPipeline = nullptr;
+    _currentPipelineWorld = false;
+}
+
+void EngineMetal::SetDebugFlatColor(bool enable)
+{
+    if (_debugFlatColor == enable)
+        return;
+    _debugFlatColor = enable;
+    _currentPipeline = nullptr;
+    _currentPipelineWorld = false;
 }
 } // namespace Poseidon

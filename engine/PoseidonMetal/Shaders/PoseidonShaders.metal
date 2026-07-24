@@ -153,8 +153,18 @@ float4 FinishWorldColor(float4 color, RasterVertex input, constant PSConstantsPo
     const float4 fogColor = constants.slots[PoseidonPSSlotFogColor];
     const float4 alphaRef = constants.slots[PoseidonPSSlotAlphaRef];
     const float4 rgbEyeCoefficient = constants.slots[PoseidonPSSlotNightEye];
-    if (color.a - alphaRef.x * alphaRef.y < 0.0f)
+    if (alphaRef.z > 0.5f)
+    {
+        const float coverage =
+            clamp((color.a - alphaRef.x) / max(fwidth(color.a), 1.0e-4f) + 0.5f, 0.0f, 1.0f);
+        if (coverage <= 0.0f)
+            discard_fragment();
+        color.a = coverage;
+    }
+    else if (color.a - alphaRef.x * alphaRef.y < 0.0f)
+    {
         discard_fragment();
+    }
     const float luminance = clamp(dot(color.rgb, rgbEyeCoefficient.rgb), 0.0f, 1.0f);
     const float nightBlend = clamp(luminance + rgbEyeCoefficient.a, 0.0f, 1.0f);
     color.rgb = mix(float3(luminance), color.rgb, nightBlend);
@@ -165,8 +175,18 @@ float4 FinishWorldColor(float4 color, RasterVertex input, constant PSConstantsPo
 float4 FinishGrassColor(float4 color, RasterVertex input, constant PSConstantsPod& constants)
 {
     const float4 alphaRef = constants.slots[PoseidonPSSlotAlphaRef];
-    if (color.a - alphaRef.x * alphaRef.y < 0.0f)
+    if (alphaRef.z > 0.5f)
+    {
+        const float coverage =
+            clamp((color.a - alphaRef.x) / max(fwidth(color.a), 1.0e-4f) + 0.5f, 0.0f, 1.0f);
+        if (coverage <= 0.0f)
+            discard_fragment();
+        color.a = coverage;
+    }
+    else if (color.a - alphaRef.x * alphaRef.y < 0.0f)
+    {
         discard_fragment();
+    }
     color.rgb = mix(constants.slots[PoseidonPSSlotFogColor].rgb, color.rgb, input.fogTC);
     return alphaRef.w > 0.5f ? float4(1.0f, 0.0f, 0.0f, 1.0f) : color;
 }
