@@ -37,14 +37,15 @@ inline bool GetExecutablePath(char* destination, std::size_t destinationSize)
 
     char canonicalPath[PATH_MAX];
     const bool resolved = path != nullptr && realpath(path, canonicalPath) != nullptr;
-    if (resolved)
+    // A truncated path would silently point tests at the wrong directory — treat it as failure.
+    const bool fits = resolved && std::strlen(canonicalPath) < destinationSize;
+    if (fits)
     {
-        std::strncpy(destination, canonicalPath, destinationSize);
-        destination[destinationSize - 1] = '\0';
+        std::strcpy(destination, canonicalPath);
     }
 
     free(allocatedPath);
-    return resolved;
+    return fits;
 }
 
 } // namespace TestHelpers

@@ -9,6 +9,8 @@
 #endif
 #include <Poseidon/Foundation/Types/ScopeLock.hpp>
 
+#include <cstdlib> // abort
+
 namespace Poseidon::Foundation
 {
 #ifdef _WIN32
@@ -117,18 +119,26 @@ typedef ScopeLock<CriticalSection> ScopeLockSection;
 
 namespace MultiSyncDetail
 {
+// Mutex initialization failure is unrecoverable: callers guard heaps and other
+// shared state, and proceeding without a lock would corrupt them. Fail fast.
 inline bool InitializeRecursiveMutex(pthread_mutex_t& mutex)
 {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) != 0)
     {
-        return false;
+        Poseidon::Foundation::ErrorMessage("Fatal: pthread_mutexattr_init failed");
+        abort();
     }
 
     const int setTypeResult = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     const int initResult = setTypeResult == 0 ? pthread_mutex_init(&mutex, &attr) : setTypeResult;
     pthread_mutexattr_destroy(&attr);
-    return initResult == 0;
+    if (initResult != 0)
+    {
+        Poseidon::Foundation::ErrorMessage("Fatal: recursive mutex initialization failed (%d)", initResult);
+        abort();
+    }
+    return true;
 }
 } // namespace MultiSyncDetail
 

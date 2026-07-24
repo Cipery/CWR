@@ -351,13 +351,13 @@ if(WIN32)
     )
 elseif(APPLE)
     add_custom_target(Format
-        COMMAND /bin/sh -c "tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/format_sources.txt' | xargs -0 '${CLANG_FORMAT_EXE}' --dry-run --Werror"
+        COMMAND /bin/sh -c "set -o pipefail; tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/format_sources.txt' | xargs -0 '${CLANG_FORMAT_EXE}' --dry-run --Werror"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Checking C++ formatting (fails if changes needed)"
         VERBATIM
     )
     add_custom_target(FormatFix
-        COMMAND /bin/sh -c "tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/format_sources.txt' | xargs -0 '${CLANG_FORMAT_EXE}' -i"
+        COMMAND /bin/sh -c "set -o pipefail; tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/format_sources.txt' | xargs -0 '${CLANG_FORMAT_EXE}' -i"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Formatting C++ sources with clang-format"
         VERBATIM
@@ -429,13 +429,13 @@ if(CLANG_TIDY_EXE)
         )
     elseif(APPLE)
         add_custom_target(Tidy
-            COMMAND /bin/sh -c "tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/tidy_sources.txt' | xargs -0 '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks"
+            COMMAND /bin/sh -c "set -o pipefail; tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/tidy_sources.txt' | xargs -0 '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks"
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Running clang-tidy on all sources"
             VERBATIM
         )
         add_custom_target(TidyFix
-            COMMAND /bin/sh -c "tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/tidy_sources.txt' | xargs -0 '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks --fix-errors --fix"
+            COMMAND /bin/sh -c "set -o pipefail; tr '\\n' '\\0' < '${CMAKE_BINARY_DIR}/tidy_sources.txt' | xargs -0 '${CLANG_TIDY_EXE}' -p '${CMAKE_BINARY_DIR}' --allow-no-checks --fix-errors --fix"
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Running clang-tidy with automatic fixes (including compilation errors)"
             VERBATIM
