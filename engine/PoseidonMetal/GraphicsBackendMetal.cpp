@@ -32,7 +32,10 @@ void RegisterMetalGraphicsBackend()
     GraphicsEngineFactory::Register(GraphicsBackendDescriptor{
         "metal",
         "Metal 3 (SDL3)",
-        50,
+        // M6 parity+perf gate passed (A/B suite equivalent to GL33; 9.1x
+        // faster mission frame times on Apple Silicon) — Metal outranks
+        // GL33 (100) so Auto selects it; GL33 stays available via --render.
+        200,
         &CreateMetalBackend,
         &IsMetalAvailable,
     });
