@@ -92,7 +92,10 @@ bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
     readback->waitUntilCompleted();
     const bool success = readback->status() != MTL::CommandBufferStatusError;
     if (_frameOpen)
+    {
         _frameCommandBuffer = continuation;
+        _encoderBroker.SetCommandBuffer(continuation);
+    }
     return success;
 }
 

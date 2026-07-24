@@ -5,6 +5,7 @@
 #include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Graphics/Rendering/RenderPassDescriptor.hpp>
 #include <Poseidon/Graphics/Shared/SDLEventWindow.hpp>
+#include <PoseidonMetal/EncoderBroker.hpp>
 #include <PoseidonMetal/FrameRing.hpp>
 #include <PoseidonMetal/HandleRegistry.hpp>
 #include <PoseidonMetal/MetalFwd.hpp>
@@ -159,6 +160,18 @@ class EngineMetal final : public Engine
     float GetRenderScale() const override { return _renderScale; }
     void SetMsaaSamples(int samples) override;
     int GetMsaaSamples() const override { return _msaaSamples; }
+    bool ShadowDepthProbe(const float* lightVP16, const float* triXYZ, int vertCount, int res,
+                          float* outDepth) override;
+    void SetShadowMapsEnabled(bool enabled) override { _shadowTuning.enabled = enabled; }
+    bool ShadowMapsEnabled() const override { return _shadowTuning.enabled; }
+    ShadowMapTuning GetShadowMapTuning() const override { return _shadowTuning; }
+    void SetShadowMapTuning(const ShadowMapTuning& tuning) override { _shadowTuning = tuning; }
+    void SetShadowMapSunFactor(float factor) override;
+    void RenderShadowDepthScene(const float* lightVPs, const float* splitViewDist, const float* camFwd3,
+                                int numCascades, int omniCount, int res,
+                                const ShadowCasterSet& casters) override;
+    bool DumpShadowMap(const char* path) override;
+    bool ShadowMapCacheSelfTest() override;
 
     float ZShadowEpsilon() const override { return 0.01f; }
     float ZRoadEpsilon() const override { return 0.005f; }
@@ -228,7 +241,10 @@ class EngineMetal final : public Engine
     MTL::RenderPipelineState* ResolvePipeline(Metal::PipelineKey key, bool logMiss);
     MTL::RenderPipelineState* BuildPipeline(Metal::PipelineKey key);
     MTL::RenderCommandEncoder* EnsureFrameEncoder();
+    MTL::RenderCommandEncoder* EnsureCascadeEncoder(unsigned layer);
     void EndFrameEncoder(bool terminal = false, bool resolveForReadback = false);
+    static void ReplayFrameStickyStateThunk(void* context, MTL::RenderCommandEncoder* encoder);
+    void ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder);
     bool ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment);
     bool ApplyWorldState(const render::RenderPassDescriptor& descriptor);
     Metal::FragmentStage FragmentStageFor(const render::RenderPassDescriptor& descriptor) const;
@@ -250,6 +266,9 @@ class EngineMetal final : public Engine
     void UploadLightConstants(const LightList& lights, const TLMaterial& material, float nightEffect);
     void UploadTexGenConstants(render::TexGenMode mode);
     void UploadPSConstant(int slot, const float data[4]);
+    void UpdateShadowMapLitState();
+    bool EnsureShadowDepthArray(int resolution, int layers);
+    bool ReadShadowDepthLayer(MTL::Texture* texture, int layer, std::vector<float>& depth);
     FrameState BuildFrameState();
     bool UploadStaticMesh(MeshResource& resource, const void* vertices, std::size_t vertexBytes,
                           const void* indices, std::size_t indexBytes);
@@ -273,6 +292,7 @@ class EngineMetal final : public Engine
     void AttachDiagnostics(MTL::CommandBuffer* commandBuffer);
 
     MetalContext _metal;
+    Metal::EncoderBroker _encoderBroker;
     FrameRing _frameRing;
     std::shared_ptr<MetalDiagnostics> _diagnostics = std::make_shared<MetalDiagnostics>();
 
@@ -288,11 +308,16 @@ class EngineMetal final : public Engine
     MTL::Texture* _frameDepthStencil = nullptr;
     MTL::Texture* _captureColor = nullptr;
     std::array<MTL::Texture*, 2> _fallbackWhite = {};
+    MTL::Texture* _fallbackShadowDepth = nullptr;
+    MTL::Texture* _shadowDepthArray = nullptr;
+    MTL::Texture* _shadowProbeDepth = nullptr;
     HandleRegistry<MTL::Texture> _textureRegistry;
     HandleRegistry<MeshResource> _meshRegistry;
     std::unordered_map<std::uint32_t, MTL::RenderPipelineState*> _pipelineCache;
     std::array<MTL::DepthStencilState*, static_cast<std::size_t>(Metal::DepthMode::Count)> _depthStates = {};
+    MTL::DepthStencilState* _shadowDepthState = nullptr;
     std::array<MTL::SamplerState*, 8> _samplers = {};
+    MTL::SamplerState* _shadowCompareSampler = nullptr;
     std::vector<TLVertex> _queuedVertices;
     std::vector<TriQueue> _triQueues;
     std::vector<DrawItem> _drawItems;
@@ -324,9 +349,17 @@ class EngineMetal final : public Engine
     std::size_t _encoderVSOffset = 0;
     std::size_t _encoderPSOffset = 0;
     std::size_t _encoderWorldOffset = 0;
+    MTL::Buffer* _stickyVSBuffer = nullptr;
+    MTL::Buffer* _stickyPSBuffer = nullptr;
+    MTL::Buffer* _stickyWorldBuffer = nullptr;
+    std::size_t _stickyVSOffset = 0;
+    std::size_t _stickyPSOffset = 0;
+    std::size_t _stickyWorldOffset = 0;
     MTL::RenderPipelineState* _currentPipeline = nullptr;
     bool _currentPipelineWorld = false;
     MTL::DepthStencilState* _currentDepthState = nullptr;
+    std::array<MTL::Texture*, 3> _stickyFragmentTextures = {};
+    std::array<MTL::SamplerState*, 3> _stickyFragmentSamplers = {};
     render::CullMode _currentCull = render::CullMode::None;
     render::FrontFaceMode _currentWinding = render::FrontFaceMode::CW;
     ViewportState _currentViewport = {};
@@ -348,6 +381,16 @@ class EngineMetal final : public Engine
     MTL::Buffer* _runWorldBuffer = nullptr;
     std::size_t _runWorldOffset = 0;
     RString _pendingScreenshotPath;
+    ShadowMapTuning _shadowTuning;
+    float _shadowSunFactor = 1.0f;
+    bool _shadowMapActive = false;
+    int _shadowMapRes = 0;
+    int _shadowMapLayers = 0;
+    int _shadowCascades = 0;
+    int _shadowOmniCount = 0;
+    std::array<float, 4 * 16> _shadowMapVP = {};
+    std::array<float, 4> _shadowSplits = {};
+    std::array<float, 3> _shadowCamFwd = {};
 
     int _w = 0;
     int _h = 0;

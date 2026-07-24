@@ -42,6 +42,9 @@ void EngineMetal::MarkConstantsDirty()
     _encoderVSBuffer = nullptr;
     _encoderPSBuffer = nullptr;
     _encoderWorldBuffer = nullptr;
+    _stickyVSBuffer = nullptr;
+    _stickyPSBuffer = nullptr;
+    _stickyWorldBuffer = nullptr;
 }
 
 bool EngineMetal::SnapshotConstants()
@@ -83,6 +86,8 @@ bool EngineMetal::SnapshotConstants()
         _encoderVSBuffer = _boundVSBuffer;
     }
     _encoderVSOffset = _boundVSOffset;
+    _stickyVSBuffer = _boundVSBuffer;
+    _stickyVSOffset = _boundVSOffset;
 
     if (_encoderPSBuffer == _boundPSBuffer)
     {
@@ -95,6 +100,8 @@ bool EngineMetal::SnapshotConstants()
         _encoderPSBuffer = _boundPSBuffer;
     }
     _encoderPSOffset = _boundPSOffset;
+    _stickyPSBuffer = _boundPSBuffer;
+    _stickyPSOffset = _boundPSOffset;
     return true;
 }
 
@@ -129,6 +136,8 @@ bool EngineMetal::UploadWorldInstances(const GfxMatrix* matrices, int count)
         _encoderWorldBuffer = _boundWorldBuffer;
     }
     _encoderWorldOffset = _boundWorldOffset;
+    _stickyWorldBuffer = _boundWorldBuffer;
+    _stickyWorldOffset = _boundWorldOffset;
     return true;
 }
 
@@ -170,6 +179,8 @@ bool EngineMetal::BindWorldSlot(const GfxMatrix& world)
         _encoderWorldBuffer = _boundWorldBuffer;
     }
     _encoderWorldOffset = _boundWorldOffset;
+    _stickyWorldBuffer = _boundWorldBuffer;
+    _stickyWorldOffset = _boundWorldOffset;
     PoseidonAssert(_instCount <= 1 || _encoderWorldBuffer == _runWorldBuffer);
     PoseidonAssert(_instCount <= 1 || _encoderWorldOffset == _runWorldOffset);
     return true;
@@ -205,6 +216,47 @@ void EngineMetal::UploadFrameConstants(const FrameState& frame)
 
     const float fog[4] = {frame.fogColor[0], frame.fogColor[1], frame.fogColor[2], frame.fogColor[3]};
     UploadPSConstant(PoseidonPSSlotFogColor, fog);
+}
+
+void EngineMetal::UpdateShadowMapLitState()
+{
+    float control[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    float splits[4] = {};
+    float cascadeControl[4] = {};
+    float cameraForward[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    MTL::Texture* shadowTexture = _fallbackShadowDepth;
+
+    if (_shadowTuning.enabled && _shadowMapActive && _shadowDepthArray && _shadowCascades > 0)
+    {
+        control[0] = 1.0f;
+        control[2] = 1.0f - _shadowSunFactor * (1.0f - _shadowTuning.darkness);
+        control[3] = _shadowMapRes > 0 ? 1.0f / static_cast<float>(_shadowMapRes) : 0.0f;
+        cascadeControl[0] = static_cast<float>(_shadowCascades);
+        cascadeControl[1] = _shadowTuning.fadeRange;
+        cascadeControl[2] = _shadowTuning.biasBase;
+        cascadeControl[3] = static_cast<float>(_shadowOmniCount);
+        for (int i = 0; i < _shadowCascades; ++i)
+            splits[i] = _shadowSplits[static_cast<std::size_t>(i)];
+        cameraForward[0] = _shadowCamFwd[0];
+        cameraForward[1] = _shadowCamFwd[1];
+        cameraForward[2] = _shadowCamFwd[2];
+        std::memcpy(_psConstants.data() + PoseidonPSSlotCascadeViewProjection * 4,
+                    _shadowMapVP.data(), static_cast<std::size_t>(_shadowCascades) * 16 * sizeof(float));
+        _constantsPSDirty = true;
+        shadowTexture = _shadowDepthArray;
+    }
+
+    UploadPSConstant(PoseidonPSSlotShadowControl, control);
+    UploadPSConstant(PoseidonPSSlotCascadeSplits, splits);
+    UploadPSConstant(PoseidonPSSlotCascadeControl, cascadeControl);
+    UploadPSConstant(PoseidonPSSlotCameraForward, cameraForward);
+    _stickyFragmentTextures[2] = shadowTexture;
+    _stickyFragmentSamplers[2] = _shadowCompareSampler;
+    if (MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder())
+    {
+        encoder->setFragmentTexture(shadowTexture, 2);
+        encoder->setFragmentSamplerState(_shadowCompareSampler, 2);
+    }
 }
 
 FrameState EngineMetal::BuildFrameState()

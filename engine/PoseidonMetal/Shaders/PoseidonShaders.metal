@@ -148,6 +148,115 @@ vertex RasterVertex vsTransform(WorldVertexIn input [[stage_in]],
     return output;
 }
 
+vertex RasterVertex vsShadow(WorldVertexIn input [[stage_in]],
+                             constant VSConstantsPod& constants [[buffer(0)]],
+                             device const float4x4* worldInstances [[buffer(2)]],
+                             uint instanceId [[instance_id]])
+{
+    const float4x4 projection =
+        float4x4(constants.slots[PoseidonVSSlotProjection], constants.slots[PoseidonVSSlotProjection + 1],
+                 constants.slots[PoseidonVSSlotProjection + 2], constants.slots[PoseidonVSSlotProjection + 3]);
+    const float4x4 view =
+        float4x4(constants.slots[PoseidonVSSlotView], constants.slots[PoseidonVSSlotView + 1],
+                 constants.slots[PoseidonVSSlotView + 2], constants.slots[PoseidonVSSlotView + 3]);
+    const float4x4 texMatrix =
+        float4x4(constants.slots[PoseidonVSSlotTexMatrix0], constants.slots[PoseidonVSSlotTexMatrix0 + 1],
+                 constants.slots[PoseidonVSSlotTexMatrix0 + 2], constants.slots[PoseidonVSSlotTexMatrix0 + 3]);
+    const float4 texControl = constants.slots[PoseidonVSSlotTexControl];
+
+    RasterVertex output;
+    output.position = projection * view * worldInstances[instanceId] * float4(input.position, 1.0f);
+    output.color = constants.slots[PoseidonVSSlotDiffuse];
+    output.specular = float4(0.0f);
+    output.uv0 = texControl.x > 0.5f ? (texMatrix * float4(input.uv, 0.0f, 1.0f)).xy : input.uv;
+    output.uv1 = output.uv0;
+    output.fogTC = 1.0f;
+    output.worldRelative = float3(0.0f);
+    return output;
+}
+
+float CascadeShadowFactor(RasterVertex input, constant PSConstantsPod& constants,
+                          depth2d_array<float> shadowMap, sampler shadowSampler)
+{
+    const float4 shadowControl = constants.slots[PoseidonPSSlotShadowControl];
+    if (shadowControl.x <= 0.5f)
+        return 1.0f;
+
+    const float4 splits = constants.slots[PoseidonPSSlotCascadeSplits];
+    const float4 cascadeControl = constants.slots[PoseidonPSSlotCascadeControl];
+    const float3 cameraForward = constants.slots[PoseidonPSSlotCameraForward].xyz;
+    const int cascadeCount = clamp(int(cascadeControl.x), 0, 4);
+    const int omniCount = clamp(int(cascadeControl.w), 0, cascadeCount);
+    const float eyeDepth = dot(input.worldRelative, cameraForward);
+    const float distance3D = length(input.worldRelative);
+
+    int cascade = cascadeCount;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (i >= cascadeCount)
+            break;
+        const float metric = i < omniCount ? distance3D : eyeDepth;
+        if (metric <= splits[i])
+        {
+            cascade = i;
+            break;
+        }
+    }
+    if (cascade >= cascadeCount)
+        return 1.0f;
+
+    const float previousEdge = cascade > 0 ? splits[cascade - 1] : 0.0f;
+    const float primaryMetric = cascade < omniCount ? distance3D : eyeDepth;
+    const float band = (splits[cascade] - previousEdge) * 0.15f;
+    const float blendWeight = cascade + 1 < cascadeCount
+                                  ? clamp((primaryMetric - (splits[cascade] - band)) / max(band, 0.001f),
+                                          0.0f, 1.0f)
+                                  : 0.0f;
+    float litSum = 0.0f;
+    float weightSum = 0.0f;
+    for (int p = 0; p < 4; ++p)
+    {
+        const int layer = cascade + p;
+        if (layer >= cascadeCount)
+            break;
+        const float weight =
+            p == 0 ? 1.0f - blendWeight : (weightSum <= 0.0f ? 1.0f : (p == 1 ? blendWeight : 0.0f));
+        if (weight <= 0.0f)
+            continue;
+
+        const int matrixSlot = PoseidonPSSlotCascadeViewProjection + layer * 4;
+        const float4x4 lightViewProjection =
+            float4x4(constants.slots[matrixSlot], constants.slots[matrixSlot + 1],
+                     constants.slots[matrixSlot + 2], constants.slots[matrixSlot + 3]);
+        const float4 projected = lightViewProjection * float4(input.worldRelative, 1.0f);
+        const float3 shadowCoord = projected.xyz / projected.w;
+        // GL's shadow target and texture coordinates are bottom-left. Metal's
+        // render targets and texture coordinates are top-left, so only Y is inverted.
+        const float2 uv = float2(shadowCoord.x * 0.5f + 0.5f, 0.5f - shadowCoord.y * 0.5f);
+        if (uv.x <= 0.0f || uv.x >= 1.0f || uv.y <= 0.0f || uv.y >= 1.0f ||
+            shadowCoord.z <= 0.0f || shadowCoord.z >= 1.0f)
+            continue;
+
+        const float bias = cascadeControl.z * float((layer + 1) * (layer + 1));
+        float lit = 0.0f;
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+                lit += shadowMap.sample_compare(
+                    shadowSampler, uv + float2(float(x), float(y)) * shadowControl.w,
+                    uint(layer), shadowCoord.z - bias);
+        litSum += weight * (lit / 9.0f);
+        weightSum += weight;
+    }
+    if (weightSum <= 0.0f)
+        return 1.0f;
+
+    const float lit = litSum / weightSum;
+    const float lastSplit = splits[cascadeCount - 1];
+    const float fade = clamp((lastSplit - eyeDepth) / max(cascadeControl.y, 0.001f), 0.0f, 1.0f);
+    const float strength = (1.0f - lit) * fade * clamp(input.fogTC, 0.0f, 1.0f);
+    return mix(1.0f, shadowControl.z, strength);
+}
+
 float4 FinishWorldColor(float4 color, RasterVertex input, constant PSConstantsPod& constants)
 {
     const float4 fogColor = constants.slots[PoseidonPSSlotFogColor];
@@ -194,12 +303,15 @@ float4 FinishGrassColor(float4 color, RasterVertex input, constant PSConstantsPo
 fragment float4 psNormal(RasterVertex input [[stage_in]],
                          constant PSConstantsPod& constants [[buffer(1)]],
                          texture2d<float> tex0 [[texture(0)]],
-                         sampler tex0Sampler [[sampler(0)]])
+                         depth2d_array<float> shadowMap [[texture(2)]],
+                         sampler tex0Sampler [[sampler(0)]],
+                         sampler shadowSampler [[sampler(2)]])
 {
     const float4 constColor = constants.slots[PoseidonPSSlotConstantColor];
     float4 color = input.color * tex0.sample(tex0Sampler, input.uv0);
     color *= constColor;
     color.rgb += input.specular.rgb;
+    color.rgb *= CascadeShadowFactor(input, constants, shadowMap, shadowSampler);
     return FinishWorldColor(color, input, constants);
 }
 
@@ -207,13 +319,16 @@ fragment float4 psDetail(RasterVertex input [[stage_in]],
                          constant PSConstantsPod& constants [[buffer(1)]],
                          texture2d<float> tex0 [[texture(0)]],
                          texture2d<float> tex1 [[texture(1)]],
+                         depth2d_array<float> shadowMap [[texture(2)]],
                          sampler sampler0 [[sampler(0)]],
-                         sampler sampler1 [[sampler(1)]])
+                         sampler sampler1 [[sampler(1)]],
+                         sampler shadowSampler [[sampler(2)]])
 {
     float4 color = input.color * tex0.sample(sampler0, input.uv0);
     color *= constants.slots[PoseidonPSSlotConstantColor];
     color.rgb *= tex1.sample(sampler1, input.uv1).a * 2.0f;
     color.rgb += input.specular.rgb;
+    color.rgb *= CascadeShadowFactor(input, constants, shadowMap, shadowSampler);
     return FinishWorldColor(color, input, constants);
 }
 
@@ -221,8 +336,10 @@ fragment float4 psGrass(RasterVertex input [[stage_in]],
                         constant PSConstantsPod& constants [[buffer(1)]],
                         texture2d<float> tex0 [[texture(0)]],
                         texture2d<float> tex1 [[texture(1)]],
+                        depth2d_array<float> shadowMap [[texture(2)]],
                         sampler sampler0 [[sampler(0)]],
-                        sampler sampler1 [[sampler(1)]])
+                        sampler sampler1 [[sampler(1)]],
+                        sampler shadowSampler [[sampler(2)]])
 {
     if (input.fogTC < 0.0f)
         discard_fragment();
@@ -230,6 +347,7 @@ fragment float4 psGrass(RasterVertex input [[stage_in]],
     const float4 grass = tex1.sample(sampler1, input.uv1);
     float4 color;
     color.rgb = clamp(input.color.rgb * base.rgb * grass.rgb * 2.0f, 0.0f, 1.0f);
+    color.rgb *= CascadeShadowFactor(input, constants, shadowMap, shadowSampler);
     color.a = clamp(constants.slots[PoseidonPSSlotGrassCoefficient2].a *
                         clamp((constants.slots[PoseidonPSSlotGrassCoefficient1].a * 2.0f - 1.0f) + grass.a,
                               0.0f, 1.0f) *
@@ -258,6 +376,67 @@ fragment float4 psWater(RasterVertex input [[stage_in]],
 fragment float4 psFlat(RasterVertex input [[stage_in]])
 {
     return input.color;
+}
+
+fragment float4 psShadow(RasterVertex input [[stage_in]],
+                         constant PSConstantsPod& constants [[buffer(1)]],
+                         texture2d<float> tex0 [[texture(0)]],
+                         sampler tex0Sampler [[sampler(0)]])
+{
+    const float4 alphaRef = constants.slots[PoseidonPSSlotAlphaRef];
+    const float alpha = input.color.a * tex0.sample(tex0Sampler, input.uv0).a;
+    if (alpha - alphaRef.x * alphaRef.y < 0.0f)
+        discard_fragment();
+    // Fragment discard deliberately suppresses the Shadow state's stencil
+    // INCR, preserving cutout gaps in the live per-poly darken path.
+    return float4(0.0f, 0.0f, 0.0f, alpha);
+}
+
+struct ShadowDepthVertexOut
+{
+    float4 position [[position]];
+    float2 uv;
+};
+
+struct ShadowDepthSolidIn
+{
+    float3 position [[attribute(0)]];
+};
+
+struct ShadowDepthAlphaIn
+{
+    float3 position [[attribute(0)]];
+    float2 uv [[attribute(1)]];
+};
+
+vertex ShadowDepthVertexOut vsShadowDepthSolid(ShadowDepthSolidIn input [[stage_in]],
+                                                constant float4x4& lightViewProjection [[buffer(0)]])
+{
+    ShadowDepthVertexOut output;
+    output.position = lightViewProjection * float4(input.position, 1.0f);
+    output.uv = float2(0.0f);
+    return output;
+}
+
+vertex ShadowDepthVertexOut vsShadowDepthAlpha(ShadowDepthAlphaIn input [[stage_in]],
+                                                constant float4x4& lightViewProjection [[buffer(0)]])
+{
+    ShadowDepthVertexOut output;
+    output.position = lightViewProjection * float4(input.position, 1.0f);
+    output.uv = input.uv;
+    return output;
+}
+
+fragment void psShadowDepthSolid()
+{
+}
+
+fragment void psShadowDepthAlpha(ShadowDepthVertexOut input [[stage_in]],
+                                 texture2d<float> casterTexture [[texture(0)]],
+                                 sampler casterSampler [[sampler(0)]])
+{
+    if (casterTexture.sample(casterSampler, input.uv).a < 0.5f)
+        discard_fragment();
 }
 
 struct BlitVertexOut

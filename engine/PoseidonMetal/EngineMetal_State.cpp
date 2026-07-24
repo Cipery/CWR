@@ -79,6 +79,25 @@ void ConfigureWorldVertexDescriptor(MTL::VertexDescriptor* descriptor)
     layout->setStepRate(1);
 }
 
+void ConfigureShadowDepthVertexDescriptor(MTL::VertexDescriptor* descriptor, bool alpha)
+{
+    MTL::VertexAttributeDescriptor* position = descriptor->attributes()->object(0);
+    position->setFormat(MTL::VertexFormatFloat3);
+    position->setOffset(0);
+    position->setBufferIndex(29);
+    if (alpha)
+    {
+        MTL::VertexAttributeDescriptor* uv = descriptor->attributes()->object(1);
+        uv->setFormat(MTL::VertexFormatFloat2);
+        uv->setOffset(3 * sizeof(float));
+        uv->setBufferIndex(29);
+    }
+    MTL::VertexBufferLayoutDescriptor* layout = descriptor->layouts()->object(29);
+    layout->setStride((alpha ? 5 : 3) * sizeof(float));
+    layout->setStepFunction(MTL::VertexStepFunctionPerVertex);
+    layout->setStepRate(1);
+}
+
 MTL::ColorWriteMask ColorMask(std::uint8_t mask)
 {
     return static_cast<MTL::ColorWriteMask>(mask & 0xf);
@@ -131,6 +150,7 @@ bool EngineMetal::InitializeM1Resources()
 void EngineMetal::DestroyM1Resources()
 {
     EndFrameEncoder();
+    _encoderBroker.Reset();
     if (_frameColor)
         _frameColor->release();
     if (_frameResolveColor)
@@ -139,10 +159,19 @@ void EngineMetal::DestroyM1Resources()
         _frameDepthStencil->release();
     if (_captureColor)
         _captureColor->release();
+    if (_fallbackShadowDepth)
+        _fallbackShadowDepth->release();
+    if (_shadowDepthArray)
+        _shadowDepthArray->release();
+    if (_shadowProbeDepth)
+        _shadowProbeDepth->release();
     _frameColor = nullptr;
     _frameResolveColor = nullptr;
     _frameDepthStencil = nullptr;
     _captureColor = nullptr;
+    _fallbackShadowDepth = nullptr;
+    _shadowDepthArray = nullptr;
+    _shadowProbeDepth = nullptr;
 
     for (MTL::Texture*& texture : _fallbackWhite)
     {
@@ -160,12 +189,18 @@ void EngineMetal::DestroyM1Resources()
             state->release();
         state = nullptr;
     }
+    if (_shadowDepthState)
+        _shadowDepthState->release();
+    _shadowDepthState = nullptr;
     for (MTL::SamplerState*& sampler : _samplers)
     {
         if (sampler)
             sampler->release();
         sampler = nullptr;
     }
+    if (_shadowCompareSampler)
+        _shadowCompareSampler->release();
+    _shadowCompareSampler = nullptr;
     _textureRegistry.Clear();
     _meshRegistry.Clear();
     _frameMeshHandles.clear();
@@ -382,6 +417,21 @@ bool EngineMetal::InitializeDepthStates()
             return false;
         }
     }
+    MTL::DepthStencilDescriptor* depthOnly = MTL::DepthStencilDescriptor::alloc()->init();
+    if (!depthOnly)
+    {
+        RecordDiagnostic("failed to allocate the cascade depth-state descriptor");
+        return false;
+    }
+    depthOnly->setDepthCompareFunction(MTL::CompareFunctionLessEqual);
+    depthOnly->setDepthWriteEnabled(true);
+    _shadowDepthState = _metal.device->newDepthStencilState(depthOnly);
+    depthOnly->release();
+    if (!_shadowDepthState)
+    {
+        RecordDiagnostic("failed to create the cascade depth state");
+        return false;
+    }
     return true;
 }
 
@@ -411,6 +461,25 @@ bool EngineMetal::InitializeSamplers()
             RecordDiagnostic("failed to create sampler state " + std::to_string(index));
             return false;
         }
+    }
+    MTL::SamplerDescriptor* shadow = MTL::SamplerDescriptor::alloc()->init();
+    if (!shadow)
+    {
+        RecordDiagnostic("failed to allocate the shadow comparison sampler descriptor");
+        return false;
+    }
+    shadow->setMinFilter(MTL::SamplerMinMagFilterNearest);
+    shadow->setMagFilter(MTL::SamplerMinMagFilterNearest);
+    shadow->setMipFilter(MTL::SamplerMipFilterNotMipmapped);
+    shadow->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+    shadow->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+    shadow->setCompareFunction(MTL::CompareFunctionLessEqual);
+    _shadowCompareSampler = _metal.device->newSamplerState(shadow);
+    shadow->release();
+    if (!_shadowCompareSampler)
+    {
+        RecordDiagnostic("failed to create the shadow comparison sampler");
+        return false;
     }
     return true;
 }
@@ -450,6 +519,28 @@ bool EngineMetal::InitializePipelines()
                 return false;
         }
     }
+    const Metal::PipelineKey projectedShadow = Metal::PipelineKey::Make(
+        Metal::VertexStage::Shadow, Metal::FragmentStage::Shadow, Metal::PipelineBlend::Shadow, 0xf,
+        Metal::VertexLayout::SVertex, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
+    if (!ResolvePipeline(projectedShadow, false))
+        return false;
+    const Metal::PipelineKey projectedShadowScreen = Metal::PipelineKey::Make(
+        Metal::VertexStage::Screen, Metal::FragmentStage::Shadow, Metal::PipelineBlend::Shadow, 0xf,
+        Metal::VertexLayout::TLVertex, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
+    if (!ResolvePipeline(projectedShadowScreen, false))
+        return false;
+    const Metal::PipelineKey shadowDepthSolid = Metal::PipelineKey::Make(
+        Metal::VertexStage::ShadowDepthSolid, Metal::FragmentStage::ShadowDepthSolid,
+        Metal::PipelineBlend::Opaque, 0, Metal::VertexLayout::ShadowDepthSolid,
+        Metal::AttachmentConfig::CascadePass, 0, false);
+    if (!ResolvePipeline(shadowDepthSolid, false))
+        return false;
+    const Metal::PipelineKey shadowDepthAlpha = Metal::PipelineKey::Make(
+        Metal::VertexStage::ShadowDepthAlpha, Metal::FragmentStage::ShadowDepthAlpha,
+        Metal::PipelineBlend::Opaque, 0, Metal::VertexLayout::ShadowDepthAlpha,
+        Metal::AttachmentConfig::CascadePass, 0, false);
+    if (!ResolvePipeline(shadowDepthAlpha, false))
+        return false;
     const Metal::PipelineKey clear = Metal::PipelineKey::Make(
         Metal::VertexStage::BlitScale, Metal::FragmentStage::BlitScale, Metal::PipelineBlend::Opaque, 0,
         Metal::VertexLayout::None, Metal::AttachmentConfig::FramePass, sampleCountLog2, false);
@@ -519,7 +610,8 @@ MTL::RenderPipelineState* EngineMetal::BuildPipeline(Metal::PipelineKey key)
     descriptor->setAlphaToCoverageEnabled(alphaToCoverage);
     descriptor->setInputPrimitiveTopology(MTL::PrimitiveTopologyClassTriangle);
 
-    if (layout == Metal::VertexLayout::TLVertex || layout == Metal::VertexLayout::SVertex)
+    if (layout == Metal::VertexLayout::TLVertex || layout == Metal::VertexLayout::SVertex ||
+        layout == Metal::VertexLayout::ShadowDepthSolid || layout == Metal::VertexLayout::ShadowDepthAlpha)
     {
         MTL::VertexDescriptor* vertexDescriptor = MTL::VertexDescriptor::vertexDescriptor();
         if (!vertexDescriptor)
@@ -532,8 +624,10 @@ MTL::RenderPipelineState* EngineMetal::BuildPipeline(Metal::PipelineKey key)
         }
         if (layout == Metal::VertexLayout::TLVertex)
             ConfigureTLVertexDescriptor(vertexDescriptor);
-        else
+        else if (layout == Metal::VertexLayout::SVertex)
             ConfigureWorldVertexDescriptor(vertexDescriptor);
+        else
+            ConfigureShadowDepthVertexDescriptor(vertexDescriptor, layout == Metal::VertexLayout::ShadowDepthAlpha);
         descriptor->setVertexDescriptor(vertexDescriptor);
     }
 
@@ -596,52 +690,23 @@ MTL::RenderPipelineState* EngineMetal::BuildPipeline(Metal::PipelineKey key)
 
 MTL::RenderCommandEncoder* EngineMetal::EnsureFrameEncoder()
 {
-    if (_frameEncoder)
-        return _frameEncoder;
     if (!_frameCommandBuffer || !_frameColor || !_frameDepthStencil)
         return nullptr;
 
-    MTL::RenderPassDescriptor* pass = MTL::RenderPassDescriptor::renderPassDescriptor();
-    if (!pass)
-    {
-        RecordDiagnostic("failed to create the frame render-pass descriptor");
-        return nullptr;
-    }
-    MTL::RenderPassColorAttachmentDescriptor* color = pass->colorAttachments()->object(0);
-    color->setTexture(_frameColor);
-    if (_frameResolveColor)
-        color->setResolveTexture(_frameResolveColor);
-    color->setLoadAction(_frameNeedsClear ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    color->setStoreAction(MTL::StoreActionUnknown);
-    color->setClearColor(*_clearColor);
-
-    MTL::RenderPassDepthAttachmentDescriptor* depth = pass->depthAttachment();
-    depth->setTexture(_frameDepthStencil);
-    depth->setLoadAction(_clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    depth->setStoreAction(MTL::StoreActionUnknown);
-    depth->setClearDepth(1.0);
-    MTL::RenderPassStencilAttachmentDescriptor* stencil = pass->stencilAttachment();
-    stencil->setTexture(_frameDepthStencil);
-    stencil->setLoadAction(_clearDepth ? MTL::LoadActionClear : MTL::LoadActionLoad);
-    stencil->setStoreAction(MTL::StoreActionUnknown);
-    stencil->setClearStencil(0);
-
-    _frameEncoder = _frameCommandBuffer->renderCommandEncoder(pass);
-    if (_frameEncoder)
-    {
-        _frameEncoder->setViewport(MTL::Viewport{_currentViewport.x, _currentViewport.y, _currentViewport.width,
-                                                 _currentViewport.height, 0.0, 1.0});
-        _frameEncoder->setScissorRect(MTL::ScissorRect{_currentScissor.x, _currentScissor.y, _currentScissor.width,
-                                                       _currentScissor.height});
-        _frameEncoder->setStencilReferenceValue(0);
-        _currentPipeline = nullptr;
-        _currentPipelineWorld = false;
-        _currentDepthState = nullptr;
-        _encoderVSBuffer = nullptr;
-        _encoderPSBuffer = nullptr;
-        _encoderWorldBuffer = nullptr;
-    }
-    else
+    const Metal::EncoderBroker::FrameTarget target = {
+        _frameColor,
+        _frameResolveColor,
+        _frameDepthStencil,
+        _frameNeedsClear,
+        _clearDepth,
+        _clearColor->red,
+        _clearColor->green,
+        _clearColor->blue,
+        _clearColor->alpha,
+    };
+    _frameEncoder =
+        _encoderBroker.EnsureFrame(target, &EngineMetal::ReplayFrameStickyStateThunk, this);
+    if (!_frameEncoder)
     {
         RecordDiagnostic("failed to create the frame render encoder");
         return nullptr;
@@ -651,24 +716,71 @@ MTL::RenderCommandEncoder* EngineMetal::EnsureFrameEncoder()
     return _frameEncoder;
 }
 
+MTL::RenderCommandEncoder* EngineMetal::EnsureCascadeEncoder(unsigned layer)
+{
+    _frameEncoder = nullptr;
+    MTL::RenderCommandEncoder* encoder = _encoderBroker.EnsureCascade(_shadowDepthArray, layer);
+    if (!encoder)
+        RecordDiagnostic("failed to create cascade render encoder for layer " + std::to_string(layer));
+    _encoderVSBuffer = nullptr;
+    _encoderPSBuffer = nullptr;
+    _encoderWorldBuffer = nullptr;
+    return encoder;
+}
+
 void EngineMetal::EndFrameEncoder(bool terminal, bool resolveForReadback)
 {
-    if (_frameEncoder)
+    _encoderBroker.EndCurrent(terminal, resolveForReadback);
+    _frameEncoder = nullptr;
+    _encoderVSBuffer = nullptr;
+    _encoderPSBuffer = nullptr;
+    _encoderWorldBuffer = nullptr;
+}
+
+void EngineMetal::ReplayFrameStickyStateThunk(void* context, MTL::RenderCommandEncoder* encoder)
+{
+    static_cast<EngineMetal*>(context)->ReplayFrameStickyState(encoder);
+}
+
+void EngineMetal::ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder)
+{
+    encoder->setViewport(MTL::Viewport{_currentViewport.x, _currentViewport.y, _currentViewport.width,
+                                       _currentViewport.height, 0.0, 1.0});
+    encoder->setScissorRect(MTL::ScissorRect{_currentScissor.x, _currentScissor.y, _currentScissor.width,
+                                             _currentScissor.height});
+    encoder->setStencilReferenceValue(0);
+    encoder->setCullMode(_currentCull == render::CullMode::Back
+                             ? MTL::CullModeBack
+                             : _currentCull == render::CullMode::Front ? MTL::CullModeFront : MTL::CullModeNone);
+    encoder->setFrontFacingWinding(_currentWinding == render::FrontFaceMode::CW ? MTL::WindingClockwise
+                                                                                : MTL::WindingCounterClockwise);
+    if (_currentPipeline)
+        encoder->setRenderPipelineState(_currentPipeline);
+    if (_currentDepthState)
+        encoder->setDepthStencilState(_currentDepthState);
+    if (_currentPipelineWorld && _currentDescriptor.surface == render::SurfaceMode::OnSurface)
+        encoder->setDepthBias(-1.0f, -1.0f, 0.0f);
+    else
+        encoder->setDepthBias(0.0f, 0.0f, 0.0f);
+    if (_stickyVSBuffer)
+        encoder->setVertexBuffer(_stickyVSBuffer, _stickyVSOffset, 0);
+    if (_stickyPSBuffer)
+        encoder->setFragmentBuffer(_stickyPSBuffer, _stickyPSOffset, 1);
+    if (_stickyWorldBuffer)
+        encoder->setVertexBuffer(_stickyWorldBuffer, _stickyWorldOffset, 2);
+    for (unsigned i = 0; i < _stickyFragmentTextures.size(); ++i)
     {
-        MTL::StoreAction colorStoreAction = MTL::StoreActionStore;
-        if (_frameResolveColor)
-        {
-            colorStoreAction = terminal
-                                   ? MTL::StoreActionMultisampleResolve
-                                   : resolveForReadback ? MTL::StoreActionStoreAndMultisampleResolve
-                                                        : MTL::StoreActionStore;
-        }
-        _frameEncoder->setColorStoreAction(colorStoreAction, 0);
-        _frameEncoder->setDepthStoreAction(terminal ? MTL::StoreActionDontCare : MTL::StoreActionStore);
-        _frameEncoder->setStencilStoreAction(terminal ? MTL::StoreActionDontCare : MTL::StoreActionStore);
-        _frameEncoder->endEncoding();
-        _frameEncoder = nullptr;
+        if (_stickyFragmentTextures[i])
+            encoder->setFragmentTexture(_stickyFragmentTextures[i], i);
+        if (_stickyFragmentSamplers[i])
+            encoder->setFragmentSamplerState(_stickyFragmentSamplers[i], i);
     }
+    _encoderVSBuffer = _stickyVSBuffer;
+    _encoderVSOffset = _stickyVSOffset;
+    _encoderPSBuffer = _stickyPSBuffer;
+    _encoderPSOffset = _stickyPSOffset;
+    _encoderWorldBuffer = _stickyWorldBuffer;
+    _encoderWorldOffset = _stickyWorldOffset;
 }
 
 bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment)
@@ -728,10 +840,19 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     _encoderVSOffset = vsAllocation.offset;
     _encoderPSBuffer = psAllocation.buffer;
     _encoderPSOffset = psAllocation.offset;
+    _stickyVSBuffer = vsAllocation.buffer;
+    _stickyVSOffset = vsAllocation.offset;
+    _stickyPSBuffer = psAllocation.buffer;
+    _stickyPSOffset = psAllocation.offset;
 
     const unsigned sampler = (descriptor.sampler.filter == render::SamplerFilter::Point ? 4u : 0u) |
                              (descriptor.sampler.clampU ? 2u : 0u) | (descriptor.sampler.clampV ? 1u : 0u);
     encoder->setFragmentSamplerState(_samplers[sampler], 0);
+    _stickyFragmentSamplers[0] = _samplers[sampler];
+    encoder->setFragmentTexture(_fallbackShadowDepth, 2);
+    encoder->setFragmentSamplerState(_shadowCompareSampler, 2);
+    _stickyFragmentTextures[2] = _fallbackShadowDepth;
+    _stickyFragmentSamplers[2] = _shadowCompareSampler;
     return true;
 }
 
@@ -756,10 +877,6 @@ Metal::FragmentStage EngineMetal::FragmentStageFor(const render::RenderPassDescr
 
 bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor)
 {
-    // Projected-shadow geometry remains an M5 no-op. Alpha/additive world
-    // sections are emitted immediately in the scene's already-sorted order.
-    if (descriptor.shader == render::ShaderFamily::Shadow)
-        return false;
     MTL::RenderCommandEncoder* encoder = EnsureFrameEncoder();
     if (!encoder)
         return false;
@@ -767,10 +884,12 @@ bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor
         return true;
     const bool alphaTest =
         descriptor.alpha == render::AlphaMode::Test || descriptor.alpha == render::AlphaMode::TestAndBlend;
-    const bool alphaToCoverage = descriptor.alpha == render::AlphaMode::Test &&
+    const bool isProjectedShadow = descriptor.shader == render::ShaderFamily::Shadow;
+    const bool alphaToCoverage = !isProjectedShadow && descriptor.alpha == render::AlphaMode::Test &&
                                  descriptor.blend == render::BlendMode::Opaque && GetAlphaToCoverage();
     const Metal::PipelineKey key =
-        Metal::PipelineKey::Make(Metal::VertexStage::Transform, FragmentStageFor(descriptor),
+        Metal::PipelineKey::Make(isProjectedShadow ? Metal::VertexStage::Shadow : Metal::VertexStage::Transform,
+                                 FragmentStageFor(descriptor),
                                  ToPipelineBlend(descriptor.blend), 0xf, Metal::VertexLayout::SVertex,
                                  Metal::AttachmentConfig::FramePass, FrameSampleCountLog2(), alphaToCoverage);
     MTL::RenderPipelineState* pipeline = ResolvePipeline(key, true);
@@ -819,6 +938,8 @@ bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor
                              (descriptor.sampler.clampU ? 2u : 0u) | (descriptor.sampler.clampV ? 1u : 0u);
     encoder->setFragmentSamplerState(_samplers[sampler], 0);
     encoder->setFragmentSamplerState(_samplers[0], 1);
+    _stickyFragmentSamplers[0] = _samplers[sampler];
+    _stickyFragmentSamplers[1] = _samplers[0];
     _currentDescriptor = descriptor;
     return true;
 }

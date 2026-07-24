@@ -168,16 +168,19 @@ void EngineMetal::FlushQueueBatch()
 
         render::BuildContext context;
         context.isIn3DPass = false;
+        context.shadowAlphaRef = static_cast<std::uint8_t>((_shadowFactor * 7) >> 4);
         const render::LegacySpec spec = render::SplitLegacy(queue.special);
         const render::RenderPassDescriptor descriptor = render::BuildRenderPassDescriptor(spec, context);
-        if (descriptor.shader == render::ShaderFamily::Shadow)
-            return;
-        if (!ApplyScreenState(descriptor, Metal::FragmentStage::Normal))
+        const Metal::FragmentStage fragment = descriptor.shader == render::ShaderFamily::Shadow
+                                                  ? Metal::FragmentStage::Shadow
+                                                  : Metal::FragmentStage::Normal;
+        if (!ApplyScreenState(descriptor, fragment))
             return;
         encoder->setVertexBuffer(vertices.buffer, vertices.offset, 30);
 
         MTL::Texture* texture = queue.texture ? _textureRegistry.Resolve(queue.texture->GetHandle()) : nullptr;
-        encoder->setFragmentTexture(texture ? texture : _fallbackWhite[0], 0);
+        _stickyFragmentTextures[0] = texture ? texture : _fallbackWhite[0];
+        encoder->setFragmentTexture(_stickyFragmentTextures[0], 0);
         encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, queue.indices.size(), MTL::IndexTypeUInt16,
                                        indices.buffer, indices.offset);
         ++Poseidon::gPerfDrawCalls;
@@ -418,9 +421,8 @@ void EngineMetal::FlushQueues()
 
 void EngineMetal::BeginShadowPass()
 {
-    // M5 owns projected-shadow rendering. The live GL33 brackets are
-    // flush-only, so retaining that ordering while shadow draws themselves
-    // no-op is the safe pre-M5 behavior.
+    // The live projected-shadow path is per-poly; both brackets are ordering
+    // barriers only. Shadow depth/stencil and blend are descriptor-owned.
     FlushQueues();
 }
 
@@ -446,8 +448,10 @@ void EngineMetal::EmitDraw(const render::frame::Draw& draw)
     encoder->setVertexBuffer(mesh->vertices, mesh->vertexOffset, 29);
     MTL::Texture* texture0 = _textureRegistry.Resolve(draw.textures[0].id);
     MTL::Texture* texture1 = _textureRegistry.Resolve(draw.textures[1].id);
-    encoder->setFragmentTexture(texture0 ? texture0 : _fallbackWhite[0], 0);
-    encoder->setFragmentTexture(texture1 ? texture1 : _fallbackWhite[1], 1);
+    _stickyFragmentTextures[0] = texture0 ? texture0 : _fallbackWhite[0];
+    _stickyFragmentTextures[1] = texture1 ? texture1 : _fallbackWhite[1];
+    encoder->setFragmentTexture(_stickyFragmentTextures[0], 0);
+    encoder->setFragmentTexture(_stickyFragmentTextures[1], 1);
     const NS::UInteger instanceCount = static_cast<NS::UInteger>(_instCount > 1 ? _instCount : 1);
     encoder->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, draw.indexCount, MTL::IndexTypeUInt16, mesh->indices,
                                    mesh->indexOffset + draw.indexBegin * sizeof(std::uint16_t), instanceCount);

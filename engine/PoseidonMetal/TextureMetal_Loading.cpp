@@ -491,6 +491,50 @@ bool EngineMetal::InitializeFallbackTextures()
                              0, MTL::Origin::Make(0, 0, 0));
     }
     blit->endEncoding();
+
+    MTL::TextureDescriptor* depthDescriptor =
+        MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatDepth32Float, 1, 1, false);
+    if (!depthDescriptor)
+    {
+        staging->release();
+        RecordDiagnostic("failed to create the fallback shadow-depth descriptor");
+        return false;
+    }
+    depthDescriptor->setTextureType(MTL::TextureType2DArray);
+    depthDescriptor->setArrayLength(1);
+    depthDescriptor->setStorageMode(MTL::StorageModePrivate);
+    depthDescriptor->setUsage(
+        static_cast<MTL::TextureUsage>(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead));
+    _fallbackShadowDepth = _metal.device->newTexture(depthDescriptor);
+    if (!_fallbackShadowDepth)
+    {
+        staging->release();
+        RecordDiagnostic("failed to create the fallback shadow-depth texture");
+        return false;
+    }
+
+    MTL::RenderPassDescriptor* depthPass = MTL::RenderPassDescriptor::renderPassDescriptor();
+    if (!depthPass)
+    {
+        staging->release();
+        RecordDiagnostic("failed to create the fallback shadow-depth clear pass");
+        return false;
+    }
+    MTL::RenderPassDepthAttachmentDescriptor* depth = depthPass->depthAttachment();
+    depth->setTexture(_fallbackShadowDepth);
+    depth->setSlice(0);
+    depth->setLoadAction(MTL::LoadActionClear);
+    depth->setStoreAction(MTL::StoreActionStore);
+    depth->setClearDepth(1.0);
+    MTL::RenderCommandEncoder* depthEncoder = commandBuffer->renderCommandEncoder(depthPass);
+    if (!depthEncoder)
+    {
+        staging->release();
+        RecordDiagnostic("failed to create the fallback shadow-depth clear encoder");
+        return false;
+    }
+    depthEncoder->endEncoding();
+
     AttachDiagnostics(commandBuffer);
     commandBuffer->commit();
     commandBuffer->waitUntilCompleted();

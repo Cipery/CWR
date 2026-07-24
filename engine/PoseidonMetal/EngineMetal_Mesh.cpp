@@ -71,6 +71,7 @@ void EngineMetal::PrepareMeshTL(const LightList&, const Matrix4& modelToWorld, c
         _drawItems.clear();
         _frameState = BuildFrameState();
         UploadFrameConstants(_frameState);
+        UpdateShadowMapLitState();
         ApplyWorldViewport();
     }
     _activePassId = static_cast<int>(SpecToPassId(spec));
@@ -139,8 +140,7 @@ void EngineMetal::PrepareTriangleTL(const MipInfo& mip, const render::LegacySpec
     if (secondary)
         _currentDrawItem.backendTexture1Handle = secondary->GetHandle();
 
-    _skipCurrentWorldDraw =
-        descriptor.shader == render::ShaderFamily::Shadow || !ApplyWorldState(descriptor);
+    _skipCurrentWorldDraw = !ApplyWorldState(descriptor);
 }
 
 void EngineMetal::UpdateProjection()

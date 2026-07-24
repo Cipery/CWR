@@ -58,7 +58,7 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
     : _w(width), _h(height), _pixelSize(bpp), _windowedRestoreW(width), _windowedRestoreH(height), _windowed(windowed),
       _clearColor(std::make_unique<MTL::ClearColor>(0.04, 0.10, 0.22, 1.0))
 {
-    LOG_INFO(Graphics, "Metal: Initializing M4 alpha/MSAA backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
+    LOG_INFO(Graphics, "Metal: Initializing M5 shadow backend — {}x{} {}bpp {}", _w, _h, _pixelSize,
              _windowed ? "windowed" : "fullscreen");
     const float white[4] = {1, 1, 1, 1};
     const float eye[4] = {0.299f, 0.587f, 0.114f, 1.0f};
@@ -203,6 +203,7 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     }
 
     _frameOpen = true;
+    _encoderBroker.BeginFrame(_frameCommandBuffer);
     for (std::uint32_t handle : _frameMeshHandles)
         _meshRegistry.Release(handle);
     _frameMeshHandles.clear();
@@ -225,6 +226,8 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     _currentPipeline = nullptr;
     _currentPipelineWorld = false;
     _currentDepthState = nullptr;
+    _stickyFragmentTextures = {};
+    _stickyFragmentSamplers = {};
     _captureResolvedThisFrame = false;
     _materialSetSpec = -1;
     _materialLightsSignature = 0;
@@ -256,8 +259,10 @@ void EngineMetal::FinishDraw()
     base::FinishDraw();
     base::DrawFinishTexts();
     FlushQueues();
-    if (_frameNeedsClear)
-        EnsureFrameEncoder();
+    // A cascade pass may have closed the frame target after its last color
+    // draw. Reopen it even when no more draws followed so the terminal close
+    // can perform the one MSAA resolve for the frame.
+    EnsureFrameEncoder();
     EndFrameEncoder(true);
     if (_textBank)
         _textBank->FinishFrame();
@@ -270,6 +275,7 @@ void EngineMetal::FinishDraw()
     _frameRing.EndSpan(_frameCommandBuffer);
     _frameCommandBuffer = nullptr;
     _frameOpen = false;
+    _encoderBroker.Reset();
 
     _framePool->drain();
     _framePool = nullptr;
@@ -363,16 +369,19 @@ void EngineMetal::Clear(bool clearZ, bool clear, PackedColor color)
         if (hasQueuedTriangles)
             FlushQueues();
     }
-    if (_frameOpen && _frameEncoder && clearZ && !clear)
+    if (_frameOpen && _encoderBroker.HasOpenedFrameTarget(_frameColor) && (clearZ || clear))
     {
-        DrawClear(true, false, *_clearColor);
-        return;
-    }
-    if (_frameOpen && _frameEncoder && clear)
-    {
-        const MTL::ClearColor drawColor = MTL::ClearColor::Make(
-            ((color >> 16) & 0xFF) / 255.0, ((color >> 8) & 0xFF) / 255.0, (color & 0xFF) / 255.0, 1.0);
-        DrawClear(clearZ, true, drawColor);
+        // Attachment clears only apply on the first frame-target open. A
+        // cascade pass closes that encoder, so resume it with Load and issue
+        // the requested clear as a draw instead.
+        if (!_frameEncoder && !EnsureFrameEncoder())
+            return;
+        const MTL::ClearColor drawColor =
+            clear ? MTL::ClearColor::Make(((color >> 16) & 0xFF) / 255.0,
+                                          ((color >> 8) & 0xFF) / 255.0,
+                                          (color & 0xFF) / 255.0, 1.0)
+                  : *_clearColor;
+        DrawClear(clearZ, clear, drawColor);
         return;
     }
     if (clear)
