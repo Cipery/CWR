@@ -80,3 +80,6 @@ target/
 
 # Obsidian (local vault UI config — not project knowledge)
 .obsidian/
+
+# Claude Code session scratch (review prompts etc.)
+.claude/prompts/
