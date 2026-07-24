@@ -269,6 +269,9 @@ target_include_directories(Poseidon PUBLIC
 target_link_libraries(Poseidon PUBLIC
     spdlog::spdlog
 )
+if(APPLE)
+    target_link_libraries(Poseidon PUBLIC "-framework IOKit" "-framework CoreFoundation")
+endif()
 if(NOT WIN32)
     target_link_libraries(Poseidon PUBLIC pthread dl)
 endif()

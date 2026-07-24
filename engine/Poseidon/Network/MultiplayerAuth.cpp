@@ -18,6 +18,11 @@
 #include <string>
 #endif
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#endif
+
 namespace Poseidon
 {
 uint64_t MachineIdToPlayerId(const char* rawMachineId)
@@ -72,6 +77,25 @@ RString ReadOsMachineId()
         }
     }
     return RString();
+#elif defined(__APPLE__)
+    io_registry_entry_t root = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/");
+    if (root == MACH_PORT_NULL)
+        return RString();
+
+    CFTypeRef platformUuid =
+        IORegistryEntryCreateCFProperty(root, CFSTR(kIOPlatformUUIDKey), kCFAllocatorDefault, 0);
+    IOObjectRelease(root);
+
+    RString id;
+    if (platformUuid != nullptr && CFGetTypeID(platformUuid) == CFStringGetTypeID())
+    {
+        char buffer[128];
+        if (CFStringGetCString(static_cast<CFStringRef>(platformUuid), buffer, sizeof(buffer), kCFStringEncodingUTF8))
+            id = buffer;
+    }
+    if (platformUuid != nullptr)
+        CFRelease(platformUuid);
+    return id;
 #else
     auto readFirstLine = [](const char* path) -> std::string
     {
