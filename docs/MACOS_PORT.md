@@ -73,7 +73,7 @@ Compiled binaries need game data (not in repo, APL-SA licensed). We use the user
 - Original location (VM): `C:\Steam\steamapps\common\ARMA Cold War Assault`
 - **Local copy (Mac): `packages/ARMA Cold War Assault/`** — `packages/` is the repo's designated git-ignored game-data staging area
 - The `Remastered/` subfolder holds the remastered data the new engine targets
-- **TODO (Phase 0):** reconcile with the repo's expected layout — CTest expects `packages/Remaster`, docs mention `packages/Demo`. Likely action: stage/symlink `packages/Remaster` → our `Remastered/` data and standardize launch via `-C/--work-dir`.
+- **Layout (done):** repo convention is `packages/{Game,Demo,Remaster}`. Symlinks created: `packages/Remaster → "ARMA Cold War Assault/Remastered"`, `packages/Game → "ARMA Cold War Assault"` (classic data root). `packages/Demo` is **absent** (free Steam demo, app 4819000, not installed) → the Demo sections of external-data tests are a known failure until installed. Launch convention: `-C packages/Remaster`.
 
 ---
 
@@ -88,7 +88,7 @@ Goal: `PoseidonServer`, `PoseidonTools`, `PoseidonEvaluator` + Rust crates build
 - [x] vcpkg `arm64-osx` triplet config in `cmake/vcpkg-triplets/` — incl. per-port `VCPKG_LIBRARY_LINKAGE=dynamic` override for **openal-soft** (mirror `x64-windows-clang.cmake:4-6`; LGPL + the engine `dlopen`s it) — and **verify the pinned deps resolve for arm64-osx**: `sdl3 >= 3.4.10#1`, openal-soft, imgui[sdl3-*] under the pinned `builtin-baseline`; bump baseline if the arm64-osx port lags
 - [x] `APPLE` branch in top-level `CMakeLists.txt` **plus per-target audit**: replace GNU `--start-group/--end-group` link flags with Darwin equivalents in `apps/cwr/Server/`, `apps/tools/Tools/` (and any sibling target CMake)
 - [x] **SIMD port (blocker):** sse2neon shim (or scalar fallback) for the complete inventory — `Math3DK.hpp`, `V3QuadsP3.cpp`, `ColorsK.hpp`, `Quatrix.hpp`, `Occlusion.cpp` (`OPTIMIZE_FOR_MMX` hardcode); verify struct sizes/alignment unchanged
-- [x] **Threads (runtime-broken on macOS despite compiling):** `PoCritical.cpp` recursive-mutex init idiom (`_NP` initializer + struct copy) → `pthread_mutex_init` path; `PoSemaphore.cpp`/`MultiSync.hpp` unnamed semaphores → `dispatch_semaphore_t` backend; smoke-run a threaded tool binary, don't trust the build gate
+- [x] **Threads (runtime-broken on macOS despite compiling):** `PoCritical.cpp` recursive-mutex init idiom (`_NP` initializer + struct copy) → `pthread_mutex_init` path; `PoSemaphore.cpp`/`MultiSync.hpp` unnamed semaphores → pthread mutex+condvar backend (chosen over `dispatch_semaphore_t` for exact `sem_getvalue` semantics); smoke-run a threaded tool binary, don't trust the build gate
 - [x] **CrashHandler `__APPLE__` branch:** minimal Mach/dyld implementation or clean stub of the entire non-Windows path (`<link.h>`/ELF code cannot compile on Darwin)
 - [x] `PackFiles.cpp`: drop dead `<malloc.h>` include
 - [x] MemGrow: guard Linux includes; swap-stats via `sysctlbyname("vm.swapusage")`

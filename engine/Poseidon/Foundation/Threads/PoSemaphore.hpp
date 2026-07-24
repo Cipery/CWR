@@ -3,6 +3,10 @@
 #include <Poseidon/Foundation/Threads/PoThread.hpp>
 #include <Poseidon/Foundation/Containers/Array.hpp>
 
+#ifdef __APPLE__
+#include <atomic>
+#endif
+
 namespace Poseidon::Foundation
 {
 // Portable simple semaphore.
@@ -22,6 +26,10 @@ class PoSemaphore : public RefCountSafe
     long semaphoreValue;
 
     bool semaphoreInitialized;
+
+    std::atomic_flag initializationFailureReported = ATOMIC_FLAG_INIT;
+
+    void reportInitializationFailure();
 
 #else
 

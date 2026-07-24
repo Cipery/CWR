@@ -83,6 +83,7 @@ target_compile_definitions(PoseidonCoreTests PRIVATE
 
 target_include_directories(PoseidonCoreTests PRIVATE
     ${CMAKE_SOURCE_DIR}/engine
+    ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/tests/unit/engine/Poseidon
     ${CMAKE_SOURCE_DIR}/tests/unit/engine/Poseidon/Support
     ${CMAKE_SOURCE_DIR}/tests/unit/engine/Evaluator
@@ -599,6 +600,7 @@ target_compile_definitions(PoseidonTests PRIVATE
 # Include directories
 target_include_directories(PoseidonTests PRIVATE 
     ${CMAKE_SOURCE_DIR}/engine
+    ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

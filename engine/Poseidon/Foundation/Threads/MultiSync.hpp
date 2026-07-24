@@ -115,6 +115,23 @@ typedef ScopeLock<CriticalSection> ScopeLockSection;
 
 // POSIX implementation
 
+namespace MultiSyncDetail
+{
+inline bool InitializeRecursiveMutex(pthread_mutex_t& mutex)
+{
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) != 0)
+    {
+        return false;
+    }
+
+    const int setTypeResult = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    const int initResult = setTypeResult == 0 ? pthread_mutex_init(&mutex, &attr) : setTypeResult;
+    pthread_mutexattr_destroy(&attr);
+    return initResult == 0;
+}
+} // namespace MultiSyncDetail
+
 class SignaledObject
 {
 	private:
@@ -160,26 +177,23 @@ class Mutex: public SignaledObject
 {
         protected:
 	mutable pthread_mutex_t mutex;
+	bool mutexValid;
 
 	public:
 	Mutex ()
-	{
-	    pthread_mutexattr_t attr;
-	    pthread_mutexattr_init(&attr);
-	    pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE);
-	    pthread_mutex_init(&mutex,&attr);
-	    pthread_mutexattr_destroy(&attr);
-	}
+	    : mutexValid(MultiSyncDetail::InitializeRecursiveMutex(mutex))
+	{}
 	~Mutex ()
 	{
-	    pthread_mutex_destroy(&mutex);
+	    if ( mutexValid ) pthread_mutex_destroy(&mutex);
 	}
 	void Unlock () const
 	{
-	    pthread_mutex_unlock(&mutex);
+	    if ( mutexValid ) pthread_mutex_unlock(&mutex);
 	}
 	bool IsLocked () const
 	{
+	    if ( !mutexValid ) return false;
 	    bool ret = (pthread_mutex_trylock(&mutex) == 0);
 	    if ( ret ) Unlock();
 	    return ret;
@@ -246,28 +260,23 @@ class CriticalSection
 {
 	private:
 	mutable pthread_mutex_t mutex;
+	bool mutexValid;
 
 	public:
 	CriticalSection ()
-	{
-	    pthread_mutexattr_t attr;
-	    pthread_mutexattr_init(&attr);
-	    pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE);
-	    pthread_mutex_init(&mutex,&attr);
-	    pthread_mutexattr_destroy(&attr);
-	}
+	    : mutexValid(MultiSyncDetail::InitializeRecursiveMutex(mutex))
+	{}
 	~CriticalSection ()
 	{
-	    pthread_mutex_destroy(&mutex);
+	    if ( mutexValid ) pthread_mutex_destroy(&mutex);
 	}
 	bool Lock () const
 	{
-	    pthread_mutex_lock(&mutex);
-	    return true;
+	    return mutexValid && pthread_mutex_lock(&mutex) == 0;
 	}
 	void Unlock () const
 	{
-	    pthread_mutex_unlock(&mutex);
+	    if ( mutexValid ) pthread_mutex_unlock(&mutex);
 	}
 };
 

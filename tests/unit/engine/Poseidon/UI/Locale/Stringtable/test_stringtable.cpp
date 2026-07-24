@@ -13,6 +13,9 @@
 #include <direct.h>
 #include <Windows.h>
 #else
+#ifdef __APPLE__
+#include <TestExecutablePath.hpp>
+#endif
 #include <unistd.h>
 #include <limits.h>
 
@@ -40,6 +43,9 @@ static RString GetExecutableDirectory()
 #ifdef _WIN32
         GetModuleFileNameA(nullptr, exePath, MAX_PATH);
         char* lastSlash = strrchr(exePath, '\\');
+#elif defined(__APPLE__)
+        TestHelpers::GetExecutablePath(exePath, sizeof(exePath));
+        char* lastSlash = strrchr(exePath, '/');
 #else
         ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
         if (len > 0)

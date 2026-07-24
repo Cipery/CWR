@@ -84,6 +84,7 @@ typedef size_t SIZE_T;
 #define WINAPI
 
 #ifdef __APPLE__
+#include <math.h>
 // macOS removed the legacy BSD finite(); isfinite is the standard replacement
 #define finite(x) isfinite(x)
 #endif
@@ -276,4 +277,3 @@ inline std::string platformPath(const std::string& path)
 #define __BEGIN_DECLS /* empty */
 #define __END_DECLS   /* empty */
 #endif
-

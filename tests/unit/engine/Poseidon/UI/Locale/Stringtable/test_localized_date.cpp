@@ -22,6 +22,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #else
+#ifdef __APPLE__
+#include <TestExecutablePath.hpp>
+#endif
 #include <limits.h>
 #include <unistd.h>
 #ifndef MAX_PATH
@@ -38,6 +41,10 @@ static std::string DateFixturePath()
     GetModuleFileNameA(nullptr, p, MAX_PATH);
     char* slash = strrchr(p, '\\');
     const char* sep = "\\fixtures\\";
+#elif defined(__APPLE__)
+    TestHelpers::GetExecutablePath(p, sizeof(p));
+    char* slash = strrchr(p, '/');
+    const char* sep = "/fixtures/";
 #else
     ssize_t n = readlink("/proc/self/exe", p, sizeof(p) - 1);
     p[n > 0 ? n : 0] = '\0';

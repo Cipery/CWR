@@ -1,11 +1,23 @@
 #include <Poseidon/Foundation/Threads/PoSemaphore.hpp>
 
 #ifdef __APPLE__
+#include <Poseidon/Foundation/Framework/Log.hpp>
+
 #include <climits>
 #endif
 
 namespace Poseidon::Foundation
 {
+#ifdef __APPLE__
+void PoSemaphore::reportInitializationFailure()
+{
+    if (!initializationFailureReported.test_and_set())
+    {
+        LOG_ERROR(Core, "PoSemaphore operation ignored because semaphore initialization failed.");
+    }
+}
+#endif
+
 PoSemaphore::PoSemaphore(long init, long maxCount)
 {
     LockRegister(lock, "PoSemaphore");
@@ -47,7 +59,12 @@ void PoSemaphore::wait()
         WaitForSingleObject(handle, INFINITE);
     }
 #elif defined(__APPLE__)
-    if (!semaphoreInitialized || pthread_mutex_lock(&semaphoreMutex) != 0)
+    if (!semaphoreInitialized)
+    {
+        reportInitializationFailure();
+        return;
+    }
+    if (pthread_mutex_lock(&semaphoreMutex) != 0)
     {
         return;
     }
@@ -75,7 +92,12 @@ bool PoSemaphore::tryWait()
     }
     return (WaitForSingleObject(handle, 0L) == WAIT_OBJECT_0);
 #elif defined(__APPLE__)
-    if (!semaphoreInitialized || pthread_mutex_lock(&semaphoreMutex) != 0)
+    if (!semaphoreInitialized)
+    {
+        reportInitializationFailure();
+        return false;
+    }
+    if (pthread_mutex_lock(&semaphoreMutex) != 0)
     {
         return false;
     }
@@ -106,7 +128,13 @@ void PoSemaphore::signal(long count)
     // NOTE: ReleaseSemaphore returns nonzero on success — this error test reads inverted.
     error = (ReleaseSemaphore(handle, count, nullptr) != 0);
 #elif defined(__APPLE__)
-    if (!semaphoreInitialized || pthread_mutex_lock(&semaphoreMutex) != 0)
+    if (!semaphoreInitialized)
+    {
+        reportInitializationFailure();
+        error = true;
+        return;
+    }
+    if (pthread_mutex_lock(&semaphoreMutex) != 0)
     {
         error = true;
         return;
@@ -144,7 +172,13 @@ long PoSemaphore::getValue()
     error = true; // getValue is not available on Win32
     return 0L;
 #elif defined(__APPLE__)
-    if (!semaphoreInitialized || pthread_mutex_lock(&semaphoreMutex) != 0)
+    if (!semaphoreInitialized)
+    {
+        reportInitializationFailure();
+        error = true;
+        return 0L;
+    }
+    if (pthread_mutex_lock(&semaphoreMutex) != 0)
     {
         error = true;
         return 0L;

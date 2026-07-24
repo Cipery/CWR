@@ -22,6 +22,7 @@ target_link_libraries(PoseidonEvaluatorTests PRIVATE
 
 target_include_directories(PoseidonEvaluatorTests PRIVATE
     ${CMAKE_SOURCE_DIR}/engine
+    ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

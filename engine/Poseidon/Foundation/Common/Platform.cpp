@@ -232,6 +232,7 @@ size_t linuxMemoryUsage()
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
         return 0;
     LOG_DEBUG(Core, "Memory total: {} KB, resident: {} KB", info.virtual_size >> 10, info.resident_size >> 10);
+    // Unlike Linux's data-resident value below, Mach reports the process's full resident set.
     return static_cast<size_t>(info.resident_size);
 #else
     char procfn[32];

@@ -52,7 +52,12 @@ TEST_CASE("crash handler writes a symbolizable report on a fatal signal", "[plat
     REQUIRE(report.find("commit ") != std::string::npos);
     REQUIRE(report.find("backtrace:") != std::string::npos);
     REQUIRE(report.find("return addresses:") != std::string::npos);
+#ifdef __APPLE__
+    REQUIRE(report.find("\nmemory map unavailable on this platform (TODO Phase 3: mach_vm_region)\n") !=
+            std::string::npos);
+#else
     REQUIRE(report.find("/proc/self/maps:") != std::string::npos);
+#endif
 
     remove(path.c_str());
     rmdir(dir.c_str());

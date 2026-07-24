@@ -13,8 +13,9 @@ universal builds are pure build-matrix overhead until there is a distribution ne
 
 ### 2026-07-24 · Bring-up on native macOS OpenGL 4.1, native Metal backend as the endgame
 Port runs first on macOS's deprecated-but-working GL (engine requests exactly 3.3 Core
-Forward-Compatible, which macOS grants); a native Metal backend via the existing
-`Engine`/`CreateEngineGL33()` abstraction seam is the final phase. — *Why:* GL gets us
+Forward-Compatible, which macOS grants); a native Metal backend is the final phase,
+plugged in via the real selection surface — the `GraphicsBackend` enum/registry in
+`GraphicsEngineFactory.hpp` (not just an `Engine` factory function). — *Why:* GL gets us
 to a playable build with near-zero renderer work; Metal is a large project that must not
 block bring-up. *Alternatives rejected:* (1) ANGLE/Zink/MoltenVK translation layers —
 added complexity before evidence of need; (2) Metal-first — blocks everything on the
