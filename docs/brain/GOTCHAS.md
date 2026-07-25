@@ -69,6 +69,51 @@ vertices it grabbed were the *previous* decal's already-indexed ones. Smoke cycl
 add a moving/particle-heavy scene or use the tri harness; (2) when auditing a new backend,
 check *call ordering* against the oracle, not just the set of calls made.
 
+### Renderer — depth bias has THREE modes in GL33, not two
+**Symptom:** ground-projected shadows z-fight or drop out at steep / 3rd-person camera
+angles on Metal, while looking fine head-on (and fine in static A/B screenshots).
+**Cause:** GL33's single `ApplyPipeline` (`EngineGL33_State.cpp:311-318`) branches on
+`ShaderFamily::Shadow` FIRST (`glPolygonOffset(-1,-64)`), only then on
+`SurfaceMode::OnSurface` (`-1,-1`), else off. Metal's `ApplyWorldState` looked at
+`surface` alone, so shadows got a 64x-too-weak constant term — and the slope term
+collapses toward 0 near top-down, which is exactly when the shadow then loses the
+LessEqual test (`GLPipelineState.hpp:45-51` documents this). **Fix:** one
+`ApplyDepthBias()` owns the three-way rule, both `Apply*State` paths call it, and the
+sticky replay replays the resolved pair instead of re-deriving it (`d3614d8`).
+**Watch for:** Metal splits GL33's one `ApplyPipeline` into `ApplyWorldState` +
+`ApplyScreenState`; any per-descriptor state GL33 resets centrally must be applied in
+BOTH, or it leaks across the encoder (this bit `setDepthBias`, and earlier `cull`,
+`frontFace`, `DepthClipMode` and the PS constants in `0052d08`).
+
+### Tooling — running the game and trusting the build on macOS
+**Symptom (build):** "build clean" reported when nothing compiled. **Cause:** `-k 0` is a
+ninja flag; `cmake --build <dir> --target X -k 0` errors with `Unknown argument -k` and
+builds nothing — and a `grep -E 'error|warning'` over the output does not match that
+wording. **Fix:** `cmake --build <dir> -- -k 0`, check the process exit code (not
+`PIPESTATUS` — zsh uses lowercase `pipestatus`), and sanity-check the binary's mtime.
+Never judge a build from a filtered log you truncated with `tail`.
+
+**Symptom (run):** missing fonts/textures, or Metal silently not being tested.
+**Cause + fix:** launch `dist/<preset>/PoseidonGame` (the metallib is staged next to it;
+the `build/` copy makes Metal init fail) **with CWD = `packages/Remaster`** (fonts and
+several textures resolve relative to it). Note the game **silently falls back to GL33**
+when the metallib is missing — an A/B run can measure GL33 while you believe it is Metal.
+Always confirm `Metal: loaded .../PoseidonShaders.metallib` in the log.
+
+### Tooling — screenshot capture is unreliable, and fails silently
+**Symptom:** `--auto-screenshot` writes 4/4 PNGs on one run and 1/4 on the next *identical*
+run, aborting the game with exit code 2; `--test-type screenshot` reports "expected output
+file was not created" although the PNG does appear (written later, during shutdown, so it
+shows the "Shutdown..." screen); the harness `screenshot` verb returns ok and never writes
+at all (both backends). **Cause (partial):** `GameApplication.cpp:1357-1370` arms the
+capture, renders exactly ONE `AppIdle()`, then verifies the file exists and aborts if not —
+capture completion within that single frame is not guaranteed. Why it completes sometimes
+and not others is NOT yet diagnosed. **Aggravating:** `EngineMetal::CaptureScreenshotIfPending`
+(`EngineMetal_Readback.cpp:272`) clears `_pendingScreenshotPath` *before* attempting
+`ReadCapture()` and returns with no log when it fails — the request vanishes without a trace.
+**Consequence:** do not trust a capture-based A/B run without checking PNG size (a real
+gameplay frame is ~800KB-1.5MB; ~34KB means black or the shutdown screen).
+
 ### Game data — Parallels VM disk does not automount to /Volumes
 **Symptom:** Windows 11 VM's C: drive never appears under `/Volumes` even with Guest
 Shared Folders automount on; VM also auto-suspends when idle. **Cause:** Parallels
