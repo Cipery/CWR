@@ -360,6 +360,7 @@ class EngineMetal final : public Engine
     MTL::DepthStencilState* _currentDepthState = nullptr;
     std::array<MTL::Texture*, 3> _stickyFragmentTextures = {};
     std::array<MTL::SamplerState*, 3> _stickyFragmentSamplers = {};
+    bool _currentDepthClamp = false;
     render::CullMode _currentCull = render::CullMode::None;
     render::FrontFaceMode _currentWinding = render::FrontFaceMode::CW;
     ViewportState _currentViewport = {};

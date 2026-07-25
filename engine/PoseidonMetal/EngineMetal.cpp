@@ -226,6 +226,7 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     _currentPipeline = nullptr;
     _currentPipelineWorld = false;
     _currentDepthState = nullptr;
+    _currentDepthClamp = false;
     _stickyFragmentTextures = {};
     _stickyFragmentSamplers = {};
     _captureResolvedThisFrame = false;

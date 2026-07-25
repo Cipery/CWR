@@ -749,6 +749,7 @@ void EngineMetal::ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder)
     encoder->setScissorRect(MTL::ScissorRect{_currentScissor.x, _currentScissor.y, _currentScissor.width,
                                              _currentScissor.height});
     encoder->setStencilReferenceValue(0);
+    encoder->setDepthClipMode(_currentDepthClamp ? MTL::DepthClipModeClamp : MTL::DepthClipModeClip);
     encoder->setCullMode(_currentCull == render::CullMode::Back
                              ? MTL::CullModeBack
                              : _currentCull == render::CullMode::Front ? MTL::CullModeFront : MTL::CullModeNone);
@@ -805,10 +806,19 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     encoder->setRenderPipelineState(pipeline);
     _currentPipeline = pipeline;
     _currentPipelineWorld = false;
-    encoder->setCullMode(MTL::CullModeNone);
-    _currentCull = render::CullMode::None;
-    encoder->setFrontFacingWinding(MTL::WindingClockwise);
-    _currentWinding = render::FrontFaceMode::CW;
+    encoder->setDepthClipMode(MTL::DepthClipModeClamp);
+    _currentDepthClamp = true;
+    MTL::CullMode cull = MTL::CullModeBack;
+    if (descriptor.cull == render::CullMode::Front)
+        cull = MTL::CullModeFront;
+    else if (descriptor.cull == render::CullMode::None)
+        cull = MTL::CullModeNone;
+    encoder->setCullMode(cull);
+    _currentCull = descriptor.cull;
+    const MTL::Winding winding =
+        descriptor.frontFace == render::FrontFaceMode::CW ? MTL::WindingClockwise : MTL::WindingCounterClockwise;
+    encoder->setFrontFacingWinding(winding);
+    _currentWinding = descriptor.frontFace;
     const Metal::DepthMode depth = ToDepthMode(descriptor.depth);
     encoder->setDepthStencilState(_depthStates[static_cast<unsigned>(depth)]);
     _currentDepthState = _depthStates[static_cast<unsigned>(depth)];
@@ -816,14 +826,13 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     VSConstantsPod vs = {};
     vs.slots[PoseidonVSSlotViewportScale] = {
         2.0f / std::max(_w, 1), 2.0f / std::max(_h, 1), 0.0f, 0.0f};
-    PSConstantsPod ps = {};
-    ps.slots[PoseidonPSSlotFogColor] = {_fogColor.R(), _fogColor.G(), _fogColor.B(), 1.0f};
+    PSConstantsPod ps;
+    std::memcpy(&ps, _psConstants.data(), sizeof(ps));
     const bool alphaTest =
         descriptor.alpha == render::AlphaMode::Test || descriptor.alpha == render::AlphaMode::TestAndBlend;
     ps.slots[PoseidonPSSlotAlphaRef] = {
         descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, 0.0f, _debugFlatColor ? 1.0f : 0.0f};
     ps.slots[PoseidonPSSlotConstantColor] = {1.0f, 1.0f, 1.0f, 1.0f};
-    ps.slots[PoseidonPSSlotNightEye] = {0.299f, 0.587f, 0.114f, 1.0f};
 
     FrameRing::Allocation vsAllocation = _frameRing.Allocate(sizeof(vs));
     FrameRing::Allocation psAllocation = _frameRing.Allocate(sizeof(ps));
@@ -898,6 +907,8 @@ bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor
     encoder->setRenderPipelineState(pipeline);
     _currentPipeline = pipeline;
     _currentPipelineWorld = true;
+    encoder->setDepthClipMode(MTL::DepthClipModeClip);
+    _currentDepthClamp = false;
 
     MTL::CullMode cull = MTL::CullModeBack;
     if (descriptor.cull == render::CullMode::Front)

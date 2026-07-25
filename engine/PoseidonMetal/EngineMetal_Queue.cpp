@@ -303,8 +303,14 @@ void EngineMetal::DrawDecal(Vector3Par screen, float rhw, float sizeX, float siz
         vertex.specular = vertexSpecular;
     }
 
-    PrepareTriangle(mip, spec);
+    // Vertices MUST be queued before PrepareTriangle selects/flushes the
+    // texture queue (GL33 oracle: AddVertices -> QueuePrepareTriangle,
+    // EngineGL33_DrawShared.cpp). Reversed order lets a texture change peel
+    // the PREVIOUS decal's already-indexed vertices as "trailing unindexed"
+    // — visible as torn/missing smoke cloudlet quads (animated smoke cycles
+    // textures every few frames).
     QueueVertices(vertices, 4);
+    PrepareTriangle(mip, spec);
     static const VertexIndex indices[4] = {0, 1, 2, 3};
     QueueFan(indices, 4);
 }
