@@ -55,6 +55,20 @@ an exact `getValue()` snapshot); recursive locks use `pthread_mutex_init` + recu
 See `../MACOS_PORT.md` Phase 0. Lesson: for this codebase, "it compiles on macOS" proves
 nothing about threads — smoke-run a threaded binary.
 
+### Renderer — TriQueue invariant: vertices FIRST, then PrepareTriangle
+**Symptom:** animated smoke rendered as torn / missing quads on Metal only; static A/B
+screenshots looked perfect, so the M6 parity suite passed anyway. **Cause:**
+`EngineMetal::DrawDecal` called `PrepareTriangle` before `QueueVertices`. `PrepareTriangle`
+selects/flushes the per-texture queue, and on a texture change it peels the trailing
+*unindexed* vertices into the new batch — with the order reversed, the "trailing unindexed"
+vertices it grabbed were the *previous* decal's already-indexed ones. Smoke cycles textures
+(`basic.06`..`basic.16`) every few frames, so only smoke corrupted. **Fix:** always
+`QueueVertices` → `PrepareTriangle` → `QueueFan/QueueTriangles`, matching the GL33 oracle
+`EngineGL33_DrawShared.cpp:114` (`AddVertices` → `QueuePrepareTriangle`). Fixed in `0052d08`.
+**Two lessons:** (1) a static-screenshot A/B suite cannot catch animation-dependent bugs —
+add a moving/particle-heavy scene or use the tri harness; (2) when auditing a new backend,
+check *call ordering* against the oracle, not just the set of calls made.
+
 ### Game data — Parallels VM disk does not automount to /Volumes
 **Symptom:** Windows 11 VM's C: drive never appears under `/Volumes` even with Guest
 Shared Folders automount on; VM also auto-suspends when idle. **Cause:** Parallels
