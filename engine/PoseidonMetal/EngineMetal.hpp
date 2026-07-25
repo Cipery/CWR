@@ -245,6 +245,7 @@ class EngineMetal final : public Engine
     void EndFrameEncoder(bool terminal = false, bool resolveForReadback = false);
     static void ReplayFrameStickyStateThunk(void* context, MTL::RenderCommandEncoder* encoder);
     void ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder);
+    void ApplyDepthBias(MTL::RenderCommandEncoder* encoder, const render::RenderPassDescriptor& descriptor);
     bool ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment);
     bool ApplyWorldState(const render::RenderPassDescriptor& descriptor);
     Metal::FragmentStage FragmentStageFor(const render::RenderPassDescriptor& descriptor) const;
@@ -361,6 +362,8 @@ class EngineMetal final : public Engine
     std::array<MTL::Texture*, 3> _stickyFragmentTextures = {};
     std::array<MTL::SamplerState*, 3> _stickyFragmentSamplers = {};
     bool _currentDepthClamp = false;
+    float _currentDepthBias = 0.0f;
+    float _currentDepthSlope = 0.0f;
     render::CullMode _currentCull = render::CullMode::None;
     render::FrontFaceMode _currentWinding = render::FrontFaceMode::CW;
     ViewportState _currentViewport = {};

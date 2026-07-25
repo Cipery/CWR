@@ -759,10 +759,7 @@ void EngineMetal::ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder)
         encoder->setRenderPipelineState(_currentPipeline);
     if (_currentDepthState)
         encoder->setDepthStencilState(_currentDepthState);
-    if (_currentPipelineWorld && _currentDescriptor.surface == render::SurfaceMode::OnSurface)
-        encoder->setDepthBias(-1.0f, -1.0f, 0.0f);
-    else
-        encoder->setDepthBias(0.0f, 0.0f, 0.0f);
+    encoder->setDepthBias(_currentDepthBias, _currentDepthSlope, 0.0f);
     if (_stickyVSBuffer)
         encoder->setVertexBuffer(_stickyVSBuffer, _stickyVSOffset, 0);
     if (_stickyPSBuffer)
@@ -782,6 +779,30 @@ void EngineMetal::ReplayFrameStickyState(MTL::RenderCommandEncoder* encoder)
     _encoderPSOffset = _stickyPSOffset;
     _encoderWorldBuffer = _stickyWorldBuffer;
     _encoderWorldOffset = _stickyWorldOffset;
+}
+
+void EngineMetal::ApplyDepthBias(MTL::RenderCommandEncoder* encoder,
+                                 const render::RenderPassDescriptor& descriptor)
+{
+    // Metal orders these as constant bias, slope scale, clamp, mapping GL's
+    // glPolygonOffset(factor, units) to setDepthBias(units, factor, 0).
+    // Keep parity with EngineGL33_State.cpp:311-318 and GLPipelineState.hpp:32-62.
+    if (descriptor.shader == render::ShaderFamily::Shadow)
+    {
+        _currentDepthBias = -64.0f;
+        _currentDepthSlope = -1.0f;
+    }
+    else if (descriptor.surface == render::SurfaceMode::OnSurface)
+    {
+        _currentDepthBias = -1.0f;
+        _currentDepthSlope = -1.0f;
+    }
+    else
+    {
+        _currentDepthBias = 0.0f;
+        _currentDepthSlope = 0.0f;
+    }
+    encoder->setDepthBias(_currentDepthBias, _currentDepthSlope, 0.0f);
 }
 
 bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descriptor, Metal::FragmentStage fragment)
@@ -822,6 +843,7 @@ bool EngineMetal::ApplyScreenState(const render::RenderPassDescriptor& descripto
     const Metal::DepthMode depth = ToDepthMode(descriptor.depth);
     encoder->setDepthStencilState(_depthStates[static_cast<unsigned>(depth)]);
     _currentDepthState = _depthStates[static_cast<unsigned>(depth)];
+    ApplyDepthBias(encoder, descriptor);
 
     VSConstantsPod vs = {};
     vs.slots[PoseidonVSSlotViewportScale] = {
@@ -925,12 +947,7 @@ bool EngineMetal::ApplyWorldState(const render::RenderPassDescriptor& descriptor
     const Metal::DepthMode depth = ToDepthMode(descriptor.depth);
     _currentDepthState = _depthStates[static_cast<unsigned>(depth)];
     encoder->setDepthStencilState(_currentDepthState);
-    // Metal orders these as constant bias, slope scale, clamp; GL33's
-    // OnSurface decal offset is units=-1, factor=-1.
-    if (descriptor.surface == render::SurfaceMode::OnSurface)
-        encoder->setDepthBias(-1.0f, -1.0f, 0.0f);
-    else
-        encoder->setDepthBias(0.0f, 0.0f, 0.0f);
+    ApplyDepthBias(encoder, descriptor);
 
     const float alpha[4] = {
         descriptor.alphaRef / 255.0f, alphaTest ? 1.0f : 0.0f, alphaToCoverage ? 1.0f : 0.0f,
@@ -1078,6 +1095,10 @@ void EngineMetal::DrawClear(bool clearDepthStencil, bool clearColor, const MTL::
     encoder->setDepthStencilState(_depthStates[static_cast<unsigned>(
         clearDepthStencil ? Metal::DepthMode::ClearDepthStencil : Metal::DepthMode::ColorOnlyClear)]);
     encoder->setCullMode(MTL::CullModeNone);
+    // The clear triangle writes depth; a bias left over from a shadow or decal
+    // draw would offset the cleared value. Neutralise it here and restore the
+    // tracked pair below, symmetrically with viewport/scissor/cull/winding.
+    encoder->setDepthBias(0.0f, 0.0f, 0.0f);
     encoder->setViewport(MTL::Viewport{0, 0, static_cast<double>(width), static_cast<double>(height), 0, 1});
     encoder->setScissorRect(MTL::ScissorRect{0, 0, width, height});
     encoder->setFragmentTexture(_fallbackWhite[0], 0);
@@ -1096,6 +1117,7 @@ void EngineMetal::DrawClear(bool clearDepthStencil, bool clearColor, const MTL::
                              : cull == render::CullMode::Front ? MTL::CullModeFront : MTL::CullModeNone);
     encoder->setFrontFacingWinding(winding == render::FrontFaceMode::CW ? MTL::WindingClockwise
                                                                         : MTL::WindingCounterClockwise);
+    encoder->setDepthBias(_currentDepthBias, _currentDepthSlope, 0.0f);
     if (pipeline)
         encoder->setRenderPipelineState(pipeline);
     if (depth)
