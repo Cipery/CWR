@@ -25,5 +25,18 @@ locked repository — no PRs accepted there; all work lives on the `Cipery/CWR` 
 MSAA, shadows all A/B-equivalent to GL33, **9.1× faster** (181 fps vs 19.9 fps
 mission avg on M4 Pro). `Auto` selects Metal; GL33 stays as reference via
 `--render gl33`. Each milestone RFL-reviewed (opus xhigh + sol high) and committed
-separately. Remaining: merge `metal-backend` → `macos-port` (user decision),
-Phase 3 packaging/CI/paths, Windows/Linux builds still untested since port start.
+separately.
+
+**Post-M6 smoke-artifact chain closed (2026-07-25):** the "squares where smoke is"
+report traced to two independent GL33-parity defects, both fixed and pushed —
+`0052d08` (DrawDecal queued vertices after `PrepareTriangle`, tearing animated
+cloudlets) and `d3614d8` (depth bias ignored `ShaderFamily::Shadow`, plus screen
+state never resetting it). Verified **visually by the user in-game on Metal**, not
+by an automated A/B: capture-based verification is unreliable (see [[GOTCHAS]]),
+so there is still no regression test guarding this. A local, uncommitted fixture
+`tests/render/missions/smoke_ab.eden` (burning wrecks at noon) reproduces the
+scene on demand.
+
+Remaining: merge `metal-backend` → `macos-port` (user decision), Phase 3
+packaging/CI/paths, Windows/Linux builds still untested since port start, and an
+automated particle/animation A/B — blocked on the flaky screenshot capture path.
