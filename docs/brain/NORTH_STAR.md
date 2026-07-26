@@ -44,6 +44,10 @@ scaling. Texture lifetime also balanced at shutdown. This has not had an exhaust
 human click-through of every tab, and no automated regression test guards the
 rendering; automation covers only the backend-neutral scissor arithmetic.
 
-Remaining: merge `metal-backend` → `macos-port` (user decision), Phase 3
-packaging/CI/paths, Windows/Linux builds still untested since port start, and an
-automated particle/animation A/B — blocked on the flaky screenshot capture path.
+**Branches converged (2026-07-26):** `metal-backend` was fast-forwarded into
+`macos-port` — both point at the same commit, so `macos-port` now carries the Metal
+renderer and the dev panel. Continue port work on `macos-port`.
+
+Remaining: Phase 3 packaging/CI/paths, Windows/Linux builds still untested since
+port start, and an automated particle/animation A/B — blocked on the flaky
+screenshot capture path.
