@@ -114,6 +114,15 @@ and not others is NOT yet diagnosed. **Aggravating:** `EngineMetal::CaptureScree
 **Consequence:** do not trust a capture-based A/B run without checking PNG size (a real
 gameplay frame is ~800KB-1.5MB; ~34KB means black or the shutdown screen).
 
+### Renderer — a committed overlay capture must remain authoritative
+**Symptom:** the Metal dev overlay disappears from screenshots or flickers at non-unit render
+scale; at scale 1, pixels from an old overlay can survive a later non-clearing frame.
+**Cause:** a later `EncodeCaptureResolve` may rerun the downsample and erase the overlay, while
+compositing directly into the live scale-1 scene destroys pixels that the next load-action frame
+expects to preserve. **Fix:** composite scale-1 overlays into a private window-sized copy, publish
+the selected overlay target only after its command buffer is committed, and have
+`EncodeCaptureResolve` prefer that committed target until the next successful `InitDraw`.
+
 ### Game data — Parallels VM disk does not automount to /Volumes
 **Symptom:** Windows 11 VM's C: drive never appears under `/Volumes` even with Guest
 Shared Folders automount on; VM also auto-suspends when idle. **Cause:** Parallels

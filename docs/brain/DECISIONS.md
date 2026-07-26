@@ -6,6 +6,18 @@ capture the *reasoning* a future reader can't recover from the diff.
 
 ---
 
+### 2026-07-26 · Own a custom metal-cpp imgui renderer backend
+The Metal dev overlay uses an engine-owned C++ renderer rather than
+`imgui[metal-binding]` plus an Objective-C++ translation unit. — *Why:* this preserves
+the locked no-Objective-C++ firewall and prevents a foreign backend from mutating the
+engine's shared render encoder without participating in its state ownership. That is
+the same leaked/incorrect render-state defect class exposed by `0052d08` and `d3614d8`;
+the official backend would therefore require the same engine-specific save/restore
+work anyway. *Alternative rejected:* the official imgui Metal binding behind one
+permitted Objective-C++ TU. *Accepted cost:* we own this backend and must maintain its
+texture, draw, and layout contracts across imgui version bumps. Design and verification:
+`../IMGUI_METAL_BACKEND.md`.
+
 ### 2026-07-24 · Metal backend pulled forward; stop GL perf tuning
 Gameplay works on GL but town views are draw-call-bound (~40 µs/call CPU in Apple's
 GL→Metal translation layer; measured via perf traces after UBO stalls were fixed).
@@ -42,5 +54,6 @@ never committed (see [[NORTH_STAR]]).
 Measured on the CleanSweep II mission (M4 Pro, 1280x720): Metal 5.51 ms avg /
 181 fps vs GL33 50.21 ms / 19.9 fps — 9.1×. — *Why the flip:* the plan's gate
 (A/B parity suite + perf target) is met; GL33 remains registered at priority 100
-for `--render gl33` A/B work. *Note:* dev-panel imgui overlay is still GL-only
-(documented plan decision — CLI/tri verbs cover Metal verification).
+for `--render gl33` A/B work. *Note:* the dev-panel imgui overlay was still GL-only
+at this historical M6 gate; it was added for Metal post-M6 (see the 2026-07-26
+decision above).
