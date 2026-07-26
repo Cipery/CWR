@@ -1,0 +1,29 @@
+; Smoke/particle A/B fixture.
+;
+; Spawns a row of vehicles in front of the player and destroys them, producing
+; dense animated smoke plumes.  Animated smoke cycles its texture
+; (basic.06..basic.16) every few frames — that texture churn is what broke the
+; Metal DrawDecal queue order (commit 0052d08), and it is invisible to a single
+; static screenshot.  Capture several frames a second apart and compare backends.
+;
+; SQS syntax: ';' starts a comment, '~' sleeps, one statement per line.
+
+_p = getPos player
+_d = getDir player
+
+; Far enough that the explosions cannot kill the player — a dead player ends the
+; mission and the game exits before the captures fire.
+_v1 = "Jeep" createVehicle [(_p select 0) + 45 * sin(_d), (_p select 1) + 45 * cos(_d), 0]
+_v2 = "Jeep" createVehicle [(_p select 0) + 60 * sin(_d - 12), (_p select 1) + 60 * cos(_d - 12), 0]
+_v3 = "Jeep" createVehicle [(_p select 0) + 75 * sin(_d + 14), (_p select 1) + 75 * cos(_d + 14), 0]
+
+; Let the world settle and the vehicles land before igniting them.
+~2
+
+_v1 setDammage 1
+~1
+_v2 setDammage 1
+~1
+_v3 setDammage 1
+
+exit
