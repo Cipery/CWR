@@ -40,6 +40,14 @@ void DecodeBGRA8(const std::uint8_t* source, std::uint8_t* destination, bool inc
 }
 } // namespace
 
+void EngineMetal::RecordOverlayDiagnosticOnce(unsigned bit, const char* message)
+{
+    if ((_overlayDiagnosticMask & bit) != 0)
+        return;
+    _overlayDiagnosticMask |= bit;
+    RecordDiagnostic(message);
+}
+
 bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
 {
     if (!readback)
@@ -101,6 +109,9 @@ bool EngineMetal::SubmitSynchronousReadback(MTL::CommandBuffer* readback)
 
 MTL::Texture* EngineMetal::EncodeCaptureResolve(MTL::CommandBuffer* commandBuffer)
 {
+    if (_committedOverlayCaptureTarget)
+        return _committedOverlayCaptureTarget;
+
     MTL::Texture* resolvedFrame = ResolvedFrameColor();
     if (!resolvedFrame)
         return nullptr;
@@ -155,6 +166,86 @@ MTL::Texture* EngineMetal::EncodeCaptureResolve(MTL::CommandBuffer* commandBuffe
     return _captureColor;
 }
 
+MTL::Texture* EngineMetal::EncodeOverlayCaptureResolve(MTL::CommandBuffer* commandBuffer)
+{
+    _overlayCaptureTarget = nullptr;
+    if (!commandBuffer)
+    {
+        RecordOverlayDiagnosticOnce(1u << 0, "overlay capture resolve received a null command buffer");
+        return nullptr;
+    }
+
+    MTL::Texture* captureSource = EncodeCaptureResolve(commandBuffer);
+    if (!captureSource)
+        return nullptr;
+
+    // Select by the texture EncodeCaptureResolve actually returned. At
+    // non-unit scale it returns the scratch capture target; at scale 1 it
+    // returns the live resolved scene and must be copied before compositing.
+    if (captureSource != ResolvedFrameColor())
+    {
+        _overlayCaptureTarget = captureSource;
+        return captureSource;
+    }
+
+    if (!_overlayCaptureColor || static_cast<int>(_overlayCaptureColor->width()) != _w ||
+        static_cast<int>(_overlayCaptureColor->height()) != _h)
+    {
+        if (_overlayCaptureColor)
+        {
+            _overlayCaptureColor->release();
+            _overlayCaptureColor = nullptr;
+        }
+        MTL::TextureDescriptor* descriptor =
+            MTL::TextureDescriptor::texture2DDescriptor(MTL::PixelFormatBGRA8Unorm, _w, _h, false);
+        if (descriptor)
+        {
+            descriptor->setStorageMode(MTL::StorageModePrivate);
+            descriptor->setUsage(
+                static_cast<MTL::TextureUsage>(MTL::TextureUsageRenderTarget | MTL::TextureUsageShaderRead));
+            _overlayCaptureColor = _metal.device->newTexture(descriptor);
+        }
+        if (!_overlayCaptureColor)
+        {
+            RecordOverlayDiagnosticOnce(1u << 1,
+                                        "failed to allocate the scale-1 overlay private capture target");
+            return nullptr;
+        }
+    }
+
+    MTL::BlitCommandEncoder* blit = commandBuffer->blitCommandEncoder();
+    if (!blit)
+    {
+        RecordOverlayDiagnosticOnce(1u << 2, "failed to create the scale-1 overlay capture-copy encoder");
+        return nullptr;
+    }
+    blit->copyFromTexture(captureSource, 0, 0, MTL::Origin::Make(0, 0, 0),
+                          MTL::Size::Make(_w, _h, 1), _overlayCaptureColor, 0, 0,
+                          MTL::Origin::Make(0, 0, 0));
+    blit->endEncoding();
+    _overlayCaptureTarget = _overlayCaptureColor;
+    return _overlayCaptureTarget;
+}
+
+void EngineMetal::DiscardOverlayCaptureResolve()
+{
+    _overlayCaptureTarget = nullptr;
+}
+
+void EngineMetal::MarkOverlayCaptureCommitted()
+{
+    if (!_overlayCaptureTarget)
+    {
+        RecordOverlayDiagnosticOnce(1u << 3, "cannot commit an overlay capture without a selected target");
+        return;
+    }
+
+    _committedOverlayCaptureTarget = _overlayCaptureTarget;
+    if (_overlayCaptureTarget == _captureColor)
+        _captureResolvedThisFrame = true;
+    _overlayCaptureTarget = nullptr;
+}
+
 bool EngineMetal::ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& height)
 {
     if (!_frameColor || !_metal.commandQueue)
@@ -200,7 +291,7 @@ bool EngineMetal::ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& 
         staging->release();
         return false;
     }
-    if (_captureColor && !_frameOpen)
+    if (captureSource == _captureColor && !_frameOpen)
         _captureResolvedThisFrame = true;
 
     bgra.resize(static_cast<std::size_t>(width) * height * 4);
@@ -251,7 +342,7 @@ bool EngineMetal::ReadCapturePixel(int x, int y, std::uint8_t rgba[4])
     const bool success = SubmitSynchronousReadback(commandBuffer);
     if (success)
     {
-        if (_captureColor && !_frameOpen)
+        if (captureSource == _captureColor && !_frameOpen)
             _captureResolvedThisFrame = true;
         const std::uint8_t* bgra = static_cast<const std::uint8_t*>(staging->contents());
         DecodeBGRA8(bgra, rgba, true);

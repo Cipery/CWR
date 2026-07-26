@@ -2,7 +2,9 @@
 
 #include <PoseidonMetal/EngineMetal.hpp>
 
+#include <Poseidon/Dev/Debug/DebugOverlay.hpp>
 #include <Poseidon/Foundation/Logging/Logging.hpp>
+#include <PoseidonMetal/OverlayRendererMetal.hpp>
 #include <PoseidonMetal/Shaders/PoseidonShaderTypes.h>
 #include <PoseidonMetal/TextureMetal.hpp>
 
@@ -112,6 +114,7 @@ EngineMetal::EngineMetal(int width, int height, bool windowed, int bpp)
 
     _initialized = true;
     LoadConfig();
+    Dev::DebugOverlay::Init(_sdlWindow, std::make_unique<Metal::OverlayRendererMetal>(*this));
 
     NS::String* deviceName = _metal.device->name();
     LOG_INFO(Graphics, "Metal: {} — drawable {}x{} — {}", deviceName ? deviceName->utf8String() : "unknown device", _w,
@@ -143,6 +146,7 @@ EngineMetal::~EngineMetal()
 
     if (_initialized)
         SaveConfig();
+    Dev::DebugOverlay::Shutdown();
 
     ClearFontCache();
     delete _textBank;
@@ -186,6 +190,10 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     }
     if (!IsAbleToDraw())
         return;
+
+    _captureResolvedThisFrame = false;
+    _overlayCaptureTarget = nullptr;
+    _committedOverlayCaptureTarget = nullptr;
 
     _framePool = NS::AutoreleasePool::alloc()->init();
     if (!_framePool)
@@ -231,7 +239,6 @@ void EngineMetal::InitDraw(bool clear, PackedColor color)
     _currentDepthSlope = 0.0f;
     _stickyFragmentTextures = {};
     _stickyFragmentSamplers = {};
-    _captureResolvedThisFrame = false;
     _materialSetSpec = -1;
     _materialLightsSignature = 0;
     _texGenMode = render::TexGenMode::Fixed;
@@ -296,6 +303,11 @@ void EngineMetal::NextFrame()
         return;
     }
 
+    // Match GL33: composite the overlay after game + HUD and before capture
+    // and presentation so screenshots include the panel.
+    Dev::DebugOverlay::NewFrame();
+    Dev::DebugOverlay::Render();
+
     CaptureScreenshotIfPending();
 
     CA::MetalDrawable* drawable = (_w > 0 && _h > 0 && _frameColor) ? _metal.layer->nextDrawable() : nullptr;
@@ -341,7 +353,7 @@ void EngineMetal::NextFrame()
                     commandBuffer->presentDrawable(drawable);
                     AttachDiagnostics(commandBuffer);
                     commandBuffer->commit();
-                    if (_captureColor)
+                    if (captureSource == _captureColor)
                         _captureResolvedThisFrame = true;
                 }
                 else

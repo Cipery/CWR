@@ -23,6 +23,11 @@
 
 namespace Poseidon
 {
+namespace Metal
+{
+class OverlayRendererMetal;
+}
+
 class TextBankMetal;
 class TextureMetal;
 class VertexBufferMetal;
@@ -189,6 +194,7 @@ class EngineMetal final : public Engine
     friend class TextureMetal;
     friend class TextBankMetal;
     friend class VertexBufferMetal;
+    friend class Metal::OverlayRendererMetal;
 
     struct TriQueue
     {
@@ -286,10 +292,14 @@ class EngineMetal final : public Engine
     bool ReadCapture(std::vector<std::uint8_t>& bgra, int& width, int& height);
     bool ReadCapturePixel(int x, int y, std::uint8_t rgba[4]);
     MTL::Texture* EncodeCaptureResolve(MTL::CommandBuffer* commandBuffer);
+    MTL::Texture* EncodeOverlayCaptureResolve(MTL::CommandBuffer* commandBuffer);
+    void DiscardOverlayCaptureResolve();
+    void MarkOverlayCaptureCommitted();
     bool SubmitSynchronousReadback(MTL::CommandBuffer* commandBuffer);
     void CaptureScreenshotIfPending();
     void ApplyPendingResize();
     void RecordDiagnostic(const std::string& message);
+    void RecordOverlayDiagnosticOnce(unsigned bit, const char* message);
     void AttachDiagnostics(MTL::CommandBuffer* commandBuffer);
 
     MetalContext _metal;
@@ -308,6 +318,9 @@ class EngineMetal final : public Engine
     MTL::Texture* _frameResolveColor = nullptr;
     MTL::Texture* _frameDepthStencil = nullptr;
     MTL::Texture* _captureColor = nullptr;
+    MTL::Texture* _overlayCaptureColor = nullptr;
+    MTL::Texture* _overlayCaptureTarget = nullptr;          // Pending overlay command buffer.
+    MTL::Texture* _committedOverlayCaptureTarget = nullptr; // Authoritative after commit.
     std::array<MTL::Texture*, 2> _fallbackWhite = {};
     MTL::Texture* _fallbackShadowDepth = nullptr;
     MTL::Texture* _shadowDepthArray = nullptr;
@@ -422,6 +435,7 @@ class EngineMetal final : public Engine
     bool _windowed = true;
     bool _frameOpen = false;
     bool _loggedMidFrameReadback = false;
+    unsigned _overlayDiagnosticMask = 0;
     bool _alphaToCoverageCfg = true;
     bool _debugFlatColor = false;
     bool _initialized = false;

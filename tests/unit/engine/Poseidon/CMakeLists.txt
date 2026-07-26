@@ -378,6 +378,7 @@ list(APPEND POSEIDON_TEST_SOURCES
     Game/test_tri_generic_asserts.cpp
     Game/test_tri_value_getters.cpp
     Dev/Debug/test_dev_mode_gates.cpp
+    Dev/Debug/test_overlay_scissor.cpp
 
     # Network tests
     Network/test_network.cpp

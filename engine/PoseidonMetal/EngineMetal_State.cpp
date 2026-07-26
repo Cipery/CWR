@@ -1,6 +1,7 @@
 #include <PoseidonMetal/Private/MetalCppFirst.hpp>
 
 #include <PoseidonMetal/EngineMetal.hpp>
+#include <PoseidonMetal/OverlayRendererMetal.hpp>
 
 #include <Poseidon/Graphics/Core/TLVertex.hpp>
 #include <Poseidon/Foundation/Logging/Logging.hpp>
@@ -18,7 +19,9 @@ namespace
 const char* VertexFunctionName(Metal::VertexStage stage)
 {
     static const char* names[] = {"vsScreen",           "vsTransform",        "vsShadow",
-                                  "vsShadowDepthSolid", "vsShadowDepthAlpha", "vsBlitScale"};
+                                  "vsShadowDepthSolid", "vsShadowDepthAlpha", "vsBlitScale",
+                                  "vsImGui"};
+    static_assert(sizeof(names) / sizeof(names[0]) == static_cast<unsigned>(Metal::VertexStage::Count));
     return names[static_cast<unsigned>(stage)];
 }
 
@@ -26,7 +29,8 @@ const char* FragmentFunctionName(Metal::FragmentStage stage)
 {
     static const char* names[] = {
         "psNormal",           "psDetail",           "psGrass",    "psWater", "psShadow", "psFlat",
-        "psShadowDepthSolid", "psShadowDepthAlpha", "psBlitScale"};
+        "psShadowDepthSolid", "psShadowDepthAlpha", "psBlitScale", "psImGui"};
+    static_assert(sizeof(names) / sizeof(names[0]) == static_cast<unsigned>(Metal::FragmentStage::Count));
     return names[static_cast<unsigned>(stage)];
 }
 
@@ -54,6 +58,33 @@ void ConfigureTLVertexDescriptor(MTL::VertexDescriptor* descriptor)
     }
     MTL::VertexBufferLayoutDescriptor* layout = descriptor->layouts()->object(30);
     layout->setStride(sizeof(TLVertex));
+    layout->setStepFunction(MTL::VertexStepFunctionPerVertex);
+    layout->setStepRate(1);
+}
+
+void ConfigureImGuiVertexDescriptor(MTL::VertexDescriptor* descriptor)
+{
+    struct Attribute
+    {
+        MTL::VertexFormat format;
+        std::size_t offset;
+    };
+    const Attribute attributes[] = {
+        {MTL::VertexFormatFloat2, offsetof(Metal::OverlayVertex, pos)},
+        {MTL::VertexFormatFloat2, offsetof(Metal::OverlayVertex, uv)},
+        // ImGui's ImU32 is RGBA-ordered in memory. TLVertex uses Poseidon's
+        // 0xAARRGGBB PackedColor and therefore needs the distinct BGRA format.
+        {MTL::VertexFormatUChar4Normalized, offsetof(Metal::OverlayVertex, col)},
+    };
+    for (unsigned i = 0; i < sizeof(attributes) / sizeof(attributes[0]); ++i)
+    {
+        MTL::VertexAttributeDescriptor* attribute = descriptor->attributes()->object(i);
+        attribute->setFormat(attributes[i].format);
+        attribute->setOffset(attributes[i].offset);
+        attribute->setBufferIndex(30);
+    }
+    MTL::VertexBufferLayoutDescriptor* layout = descriptor->layouts()->object(30);
+    layout->setStride(sizeof(Metal::OverlayVertex));
     layout->setStepFunction(MTL::VertexStepFunctionPerVertex);
     layout->setStepRate(1);
 }
@@ -159,6 +190,8 @@ void EngineMetal::DestroyM1Resources()
         _frameDepthStencil->release();
     if (_captureColor)
         _captureColor->release();
+    if (_overlayCaptureColor)
+        _overlayCaptureColor->release();
     if (_fallbackShadowDepth)
         _fallbackShadowDepth->release();
     if (_shadowDepthArray)
@@ -169,6 +202,9 @@ void EngineMetal::DestroyM1Resources()
     _frameResolveColor = nullptr;
     _frameDepthStencil = nullptr;
     _captureColor = nullptr;
+    _overlayCaptureColor = nullptr;
+    _overlayCaptureTarget = nullptr;
+    _committedOverlayCaptureTarget = nullptr;
     _fallbackShadowDepth = nullptr;
     _shadowDepthArray = nullptr;
     _shadowProbeDepth = nullptr;
@@ -283,8 +319,8 @@ bool EngineMetal::RebuildFrameTargets()
         if (newCapture)
             newCapture->release();
         RecordDiagnostic("failed to create " + std::to_string(targetWidth) + "x" + std::to_string(targetHeight) +
-                         " frame targets at " + std::to_string(sampleCount) +
-                         "x MSAA and window-sized capture target");
+                         " frame targets at " + std::to_string(sampleCount) + "x MSAA" +
+                         (_renderScale != 1.0f ? " and window-sized capture target" : ""));
         return false;
     }
 
@@ -296,10 +332,15 @@ bool EngineMetal::RebuildFrameTargets()
         _frameDepthStencil->release();
     if (_captureColor)
         _captureColor->release();
+    if (_overlayCaptureColor)
+        _overlayCaptureColor->release();
     _frameColor = newColor;
     _frameResolveColor = newResolve;
     _frameDepthStencil = newDepth;
     _captureColor = newCapture;
+    _overlayCaptureColor = nullptr;
+    _overlayCaptureTarget = nullptr;
+    _committedOverlayCaptureTarget = nullptr;
     _captureResolvedThisFrame = false;
     _frameNeedsClear = true;
     _clearDepth = true;
@@ -611,12 +652,13 @@ MTL::RenderPipelineState* EngineMetal::BuildPipeline(Metal::PipelineKey key)
     descriptor->setInputPrimitiveTopology(MTL::PrimitiveTopologyClassTriangle);
 
     if (layout == Metal::VertexLayout::TLVertex || layout == Metal::VertexLayout::SVertex ||
-        layout == Metal::VertexLayout::ShadowDepthSolid || layout == Metal::VertexLayout::ShadowDepthAlpha)
+        layout == Metal::VertexLayout::ShadowDepthSolid || layout == Metal::VertexLayout::ShadowDepthAlpha ||
+        layout == Metal::VertexLayout::ImGui)
     {
         MTL::VertexDescriptor* vertexDescriptor = MTL::VertexDescriptor::vertexDescriptor();
         if (!vertexDescriptor)
         {
-            RecordDiagnostic("failed to create TLVertex descriptor for key " + PipelineKeyLabel(key.value));
+            RecordDiagnostic("failed to create vertex descriptor for key " + PipelineKeyLabel(key.value));
             descriptor->release();
             vertex->release();
             fragment->release();
@@ -624,6 +666,8 @@ MTL::RenderPipelineState* EngineMetal::BuildPipeline(Metal::PipelineKey key)
         }
         if (layout == Metal::VertexLayout::TLVertex)
             ConfigureTLVertexDescriptor(vertexDescriptor);
+        else if (layout == Metal::VertexLayout::ImGui)
+            ConfigureImGuiVertexDescriptor(vertexDescriptor);
         else if (layout == Metal::VertexLayout::SVertex)
             ConfigureWorldVertexDescriptor(vertexDescriptor);
         else

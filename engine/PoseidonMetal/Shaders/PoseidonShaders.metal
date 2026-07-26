@@ -13,6 +13,37 @@ struct ScreenVertexIn
     float2 uv1 [[attribute(5)]];
 };
 
+struct ImGuiVertexIn
+{
+    float2 position [[attribute(0)]];
+    float2 uv [[attribute(1)]];
+    float4 color [[attribute(2)]];
+};
+
+struct ImGuiVertexOut
+{
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+
+vertex ImGuiVertexOut vsImGui(ImGuiVertexIn input [[stage_in]],
+                              constant float4x4& projection [[buffer(0)]])
+{
+    ImGuiVertexOut output;
+    output.position = projection * float4(input.position, 0.0f, 1.0f);
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+fragment float4 psImGui(ImGuiVertexOut input [[stage_in]],
+                        texture2d<float> atlas [[texture(0)]],
+                        sampler atlasSampler [[sampler(0)]])
+{
+    return input.color * atlas.sample(atlasSampler, input.uv);
+}
+
 struct RasterVertex
 {
     float4 position [[position]];

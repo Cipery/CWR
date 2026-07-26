@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -21,11 +22,10 @@
 
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
-#include <imgui_impl_opengl3.h>
 #include <SDL3/SDL.h>
-#include <glad/gl.h>
 
 #include <Poseidon/Dev/Debug/DebugOverlay.hpp>
+#include <Poseidon/Dev/Debug/OverlayRenderer.hpp>
 #include <Poseidon/Dev/Debug/DebugCheats.hpp>
 #include <Poseidon/Dev/Debug/DebugCommands.hpp>
 #include <Poseidon/Foundation/Logging/Logging.hpp>
@@ -80,6 +80,7 @@ bool s_visible = false;
 bool s_selectShadowsTab = false; // one-shot: force-select the Shadows tab next draw
 bool s_selectMemoryTab = false;  // one-shot: force-select the Memory tab next draw
 SDL_Window* s_window = nullptr;
+std::unique_ptr<IOverlayRenderer> s_renderer;
 // Saved mouse-grab state while the dev panel holds the cursor released.
 bool s_mouseReleasedByPanel = false;
 bool s_savedMouseGrab = false;
@@ -1684,11 +1685,23 @@ void DrawMainWindow()
 }
 } // namespace
 
-void Init(SDL_Window* window, void* glContext)
+void Init(SDL_Window* window, std::unique_ptr<IOverlayRenderer> renderer)
 {
-    if (s_initialized)
+    if (s_initialized || s_renderer)
+    {
+        LOG_ERROR(Graphics, "DebugOverlay: Init called while already initialized");
         return;
-    s_window = window;
+    }
+    if (!renderer)
+    {
+        LOG_ERROR(Graphics, "DebugOverlay: Init called without a renderer");
+        return;
+    }
+    if (!window)
+    {
+        LOG_ERROR(Graphics, "DebugOverlay: Init called without an SDL window");
+        return;
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1697,28 +1710,34 @@ void Init(SDL_Window* window, void* glContext)
     io.IniFilename = nullptr; // no imgui.ini side-effects
     ImGui::StyleColorsDark();
 
-    if (!ImGui_ImplSDL3_InitForOpenGL(window, glContext))
+    if (!renderer->Init(window))
     {
-        LOG_ERROR(Graphics, "DebugOverlay: ImGui_ImplSDL3_InitForOpenGL failed");
-        return;
-    }
-    if (!ImGui_ImplOpenGL3_Init("#version 330"))
-    {
-        LOG_ERROR(Graphics, "DebugOverlay: ImGui_ImplOpenGL3_Init failed");
+        LOG_ERROR(Graphics, "DebugOverlay: renderer '{}' failed to initialize", renderer->Name());
+        renderer->Shutdown();
+        ImGui::DestroyContext();
+        s_window = nullptr;
         return;
     }
 
+    s_window = window;
+    s_renderer = std::move(renderer);
     s_initialized = true;
-    LOG_INFO(Graphics, "DebugOverlay: ImGui initialized (press Ctrl+` / Ctrl+; to toggle)");
+    LOG_INFO(Graphics, "DebugOverlay: ImGui initialized with renderer '{}' (press Ctrl+` / Ctrl+; to toggle)",
+             s_renderer->Name());
 }
 
 void Shutdown()
 {
-    if (!s_initialized)
-        return;
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
+    if (s_renderer)
+    {
+        if (!s_renderer->PrepareShutdown())
+            return;
+        s_renderer->Shutdown();
+        s_renderer.reset();
+    }
+    if (ImGui::GetCurrentContext())
+        ImGui::DestroyContext();
+    s_window = nullptr;
     s_initialized = false;
 }
 
@@ -1758,8 +1777,9 @@ void NewFrame()
     // after the game render), so we draw our own cursor as part of ImGui's
     // drawlist to stay on top.  When hidden, fall back to the engine cursor.
     ImGui::GetIO().MouseDrawCursor = s_visible;
-    ImGui_ImplOpenGL3_NewFrame();
+    s_renderer->NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    s_renderer->CorrectDisplayMetrics();
     ImGui::NewFrame();
     if (s_visible)
         DrawMainWindow();
@@ -1770,11 +1790,7 @@ void Render()
     if (!s_initialized)
         return;
     ImGui::Render();
-    // Make sure we draw to the default framebuffer in case the engine left
-    // an FBO bound — happens with post-FX in GL33.  Other state (blend,
-    // scissor, vao, depth) is saved/restored inside RenderDrawData.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    s_renderer->RenderDrawData(ImGui::GetDrawData());
 
     // Drain deferred actions queued by UI click handlers.  See the
     // s_pendingActions comment for the why — running cheats here

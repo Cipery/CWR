@@ -1,4 +1,5 @@
 #include <PoseidonGL33/EngineGL33.hpp>
+#include <PoseidonGL33/OverlayRendererGL33.hpp>
 #include <Poseidon/Core/Application.hpp>
 #include <Poseidon/Core/Config/EngineConfig.hpp>
 #include <Poseidon/Graphics/Shared/WindowPlacement.hpp>
@@ -403,7 +404,7 @@ EngineGL33::EngineGL33(int width, int height, bool windowed, int bpp)
 
     // Initialize the ImGui debug overlay (font tuner + future panels).  Hidden
     // by default — F8 toggles.  Must be called after GL context exists.
-    DebugOverlay::Init(_sdlWindow, _glContext);
+    DebugOverlay::Init(_sdlWindow, std::make_unique<OverlayRendererGL33>(_glContext));
 
     // MSAA lives on the offscreen frame target; _msaaActive (the
     // alpha-to-coverage gate) is set when that target is created with

@@ -12,6 +12,7 @@ enum class VertexStage : std::uint8_t
     ShadowDepthSolid,
     ShadowDepthAlpha,
     BlitScale,
+    ImGui,
     Count
 };
 
@@ -26,6 +27,7 @@ enum class FragmentStage : std::uint8_t
     ShadowDepthSolid,
     ShadowDepthAlpha,
     BlitScale,
+    ImGui,
     Count
 };
 
@@ -56,6 +58,7 @@ enum class VertexLayout : std::uint8_t
     ShadowDepthSolid,
     ShadowDepthAlpha,
     None,
+    ImGui,
     Count
 };
 

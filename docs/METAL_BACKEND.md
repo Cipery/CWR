@@ -1362,11 +1362,11 @@ gl33` still plays; scoped verification — run the named checks only.
   `Engine.hpp:457-466` comment: overlapping casters darken once (stencil EQUAL-0/INCR
   working); `ShadowDepthProbe` matches the CPU oracle within GL33's tolerance; foliage
   cutout shadows show no leaf-gap phantom darkening (§5.2 psShadow note — discard must
-  suppress stencil INCR). Tuning verification drives `SetShadowMapTuning` via **trident
-  CLI verbs, not the F8 overlay** — `DebugOverlay` is hard-wired to GL
-  (`ImGui_ImplSDL3_InitForOpenGL` / `ImGui_ImplOpenGL3_Init`, `DebugOverlay.cpp:1700,1705`)
-  and no-ops under Metal in v1 (§10 risk 4): sweep tuning values via CLI, compare
-  `ShadowDepthProbe`/`DumpShadowMap`/screenshot output A/B.
+  suppress stencil INCR). The M5 gate drove `SetShadowMapTuning` via **trident CLI
+  verbs**, since the Metal dev overlay had not been implemented at that milestone:
+  sweep tuning values via CLI, compare `ShadowDepthProbe`/`DumpShadowMap`/screenshot
+  output A/B. The dev overlay now has a native Metal renderer; its design and
+  verification status are documented in `IMGUI_METAL_BACKEND.md`.
 - **M6 — Parity, perf gate, default flip.**
   A/B screenshot suite across menu/day/night/fog/water/shadow scenes; gamma —
   **documented no-op** identical to GL33-on-macOS (`DoSetGamma` is `#ifdef _WIN32`,
@@ -1377,8 +1377,9 @@ gl33` still plays; scoped verification — run the named checks only.
   churn for `nextDrawable` nil paths); flip descriptor priority to 200 (Auto → Metal
   on macOS); update `docs/MACOS_PORT.md` Phase 4 + `DECISIONS.md`. Optional if measured
   useful: `MTLBinaryArchive` warm start, texture-residency polish. The imgui **Metal**
-  overlay backend stays a post-M6 ASK-FIRST item — **no M6 gate depends on the
-  overlay** (all gates run via harness verbs/screenshots).
+  overlay backend was delivered separately after M6 — **no M6 gate depended on the
+  overlay** (all gates ran via harness verbs/screenshots); see
+  `IMGUI_METAL_BACKEND.md`.
   **Verify:** town-scene frame CPU ≤ 30 % of GL33's; zero validation errors; A/B suite
   signed off; GPU error count stays 0 across the A/B suite (`triGetGLErrorCount`);
   GL33 still selectable for regression triage.
@@ -1392,7 +1393,7 @@ gl33` still plays; scoped verification — run the named checks only.
 | 1 | **Metal Toolchain is a separate download** — `xcrun metal` fails out-of-box (verified on the dev machine: `xcodebuild -downloadComponent MetalToolchain` required); exact `-std` flag spelling also unpinned (⚠️ §1.5) | §3.3: configure-time discovery with actionable FATAL_ERROR, `CWR_METAL_RUNTIME_SHADERS=ON` runtime-compile fallback, CI provisioning step. M0 pins the flag spelling via `metal --help`. |
 | 2 | **Buffer-offset alignment on Apple GPUs** (⚠️ §1.6) | Use 256 B; M0 spike may relax after checking Metal feature tables for the device family — only if ring pressure ever matters (it won't at 8 MB). |
 | 3 | **`SetGamma`** — *resolved:* GL33's `DoSetGamma` is Win32-only (`EngineGL33_Draw.cpp:30-63`); on macOS GL33 stores `_gamma` and does nothing | Metal `SetGamma` = the same stored **no-op**, documented — exact A/B parity. No shader/display work. |
-| 4 | **ImGui `DebugOverlay` (F8)** is hard-wired to GL (`ImGui_ImplSDL3_InitForOpenGL` + `ImGui_ImplOpenGL3_Init`, `DebugOverlay.cpp:1700,1705`) | v1 decision (consistent with M5/M6 gates): overlay **no-ops under Metal** (guard in `DebugOverlay`); all shadow-tuning verification runs through trident CLI `SetShadowMapTuning` verbs (§9 M5). Post-M6: vcpkg `imgui[metal-binding]` + SDL3 backend + the single permitted ObjC++ TU — ASK FIRST (new dep feature). |
+| 4 | **ImGui `DebugOverlay` on Metal** — resolved post-M6 with an engine-owned metal-cpp renderer | Implementation and verification: `IMGUI_METAL_BACKEND.md`. A `MTL_DEBUG_LAYER=1` run and screenshot verified rendering, colour, clipping, scaling, lazy font-atlas creation, and balanced texture lifetime. This is not an exhaustive human click-through of every tab, and no automated regression test guards the rendering; the unit test covers only backend-neutral scissor arithmetic. |
 | 5 | **`psShadow` discard vs stencil INCR on TBDR** (we drop the late-Z hack, §5.2; per-poly path makes stencil correctness user-visible as double-darkening) | M5 verify with the exact historical symptom (foliage gap shadows / phantom darkening); if Metal's discard-suppresses-stencil guarantee shows an edge case, fall back to explicit depth-write shader variant and document in GOTCHAS. |
 | 6 | **`nextDrawable` nil / blocking under occlusion & fast resize** | Late acquisition in `NextFrame` only (§4.4/§6.5) + nil-skip; frame work is unaffected (already committed in FinishDraw); soak-test minimize/occlude/resize at M0 and M6. |
 | 7 | **Screen-path Y orientation & viewport/scissor origin** (Metal top-left vs GL bottom-left; 2D clip is CPU-side per §6.7 — scissor exists only in broker-internal full-target/edge draws) | M1 visual verify; viewport and broker scissor rects use the top-left convention directly (GL-era flips *removed* — §6.4 world viewport, §6.5 readbacks; `GetGLViewport` returns top-left unflipped, §4.5); assert with HUD screenshots and the color readback codec. |
